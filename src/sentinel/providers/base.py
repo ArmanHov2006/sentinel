@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from src.sentinel.domain.models import ChatRequest, ChatResponse
+from sentinel.domain.models import ChatRequest, ChatResponse
 
 class LLMProvider(ABC):
     @abstractmethod
