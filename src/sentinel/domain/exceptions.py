@@ -137,3 +137,9 @@ class CircuitOpenError(SentinelError):
     """Circuit breaker is open."""
     pass
 
+class RateLimitExceededError(SentinelError):
+    """Rate limit exceeded."""
+    
+    def __init__(self, message: str, retry_after: int, details: dict = None):
+        super().__init__(message, details)
+        self.retry_after = retry_after

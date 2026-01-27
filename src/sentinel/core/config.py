@@ -1,6 +1,22 @@
 from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sentinel.shield.pii_shield import PIIAction
 
+class PIISettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="PII_",
+        extra="ignore"
+    )
+    action: PIIAction = PIIAction.REDACT
+
+class RetrySettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="RETRY_",
+        extra="ignore"
+    )
+    max_attempts: int = 3
+    base_delay: float = 1.0
+    max_delay: float = 40.0
 class RedisSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="REDIS_",
@@ -14,7 +30,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="ignore"
+        extra="ignore",
     )
     
     sentinel_env: str = "development"
@@ -25,7 +41,15 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = 60.0
     host: str = "0.0.0.0"
     port: int = 8000
+    
+    # Nested settings
+    pii: PIISettings = PIISettings()
+    retry: RetrySettings = RetrySettings()
     redis: RedisSettings = RedisSettings()
+    
+    # Rate limiting (could also be nested)
+    rate_limit_max_requests: int = 100
+    rate_limit_window_seconds: int = 60
 
 @lru_cache
 def get_settings() -> Settings:
