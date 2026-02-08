@@ -1,6 +1,8 @@
-import random
 import asyncio
-from typing import Callable, Any
+import random
+from collections.abc import Callable
+from typing import Any
+
 
 class RetryPolicy:
     def __init__(self, max_attempts: int = 3, base_delay: float = 1.0, max_delay: float = 40.0):
@@ -12,13 +14,15 @@ class RetryPolicy:
         """
         Calculate the backoff time for a retry attempt.
         """
-        return min(self.max_delay, self.base_delay * (2 ** attempt) + random.uniform(0, self.base_delay))
+        return min(
+            self.max_delay, self.base_delay * (2**attempt) + random.uniform(0, self.base_delay)
+        )
 
     async def execute_with_retry(self, func: Callable, *args, **kwargs) -> Any:
         for attempt in range(1, self.max_attempts + 1):
             try:
                 return await func(*args, **kwargs)
-            except Exception as e:
+            except Exception:
                 if attempt == self.max_attempts:
                     raise
                 backoff_time = self.calculate_backoff_time(attempt)

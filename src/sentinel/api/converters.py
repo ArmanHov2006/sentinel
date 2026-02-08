@@ -11,15 +11,18 @@ so you can fill in the mapping logic as you build out providers/services.
 
 from __future__ import annotations
 
-from typing import Iterable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 from sentinel.api.schemas.chat import (
     ChatCompletionRequest,
     ChatCompletionResponse,
-    ChoiceSchema,
     ChoiceMessageSchema,
-    UsageSchema,
+    ChoiceSchema,
     MessageSchema,
+    UsageSchema,
 )
 from sentinel.domain.models import (
     ChatRequest,
@@ -64,21 +67,13 @@ def to_domain_messages(api_messages: Iterable[MessageSchema]) -> list[Message]:
 
 
 def to_domain_parameters(api_request: ChatCompletionRequest) -> ModelParameters:
-    """Convert API request fields into ModelParameters.
-
-    Think about:
-    - Right now your API schema has: temperature
-    - Later you may add: max_tokens, top_p, stop, etc.
-    """
+    """Convert API request fields into ModelParameters."""
     return ModelParameters(temperature=api_request.temperature)
 
 
 def to_domain_chat_request(api_request: ChatCompletionRequest) -> ChatRequest:
-    """Convert API ChatCompletionRequest -> domain ChatRequest.
-
-    Think about:
-    - ChatRequest has defaults for id/created_at/metadata.
-    - This function should be pure and deterministic (no I/O).
+    """
+    Convert API ChatCompletionRequest -> domain ChatRequest.
     """
     model = api_request.model
     messages = to_domain_messages(api_request.messages)
@@ -94,7 +89,9 @@ def to_api_chat_completion_response(domain: ChatResponse) -> ChatCompletionRespo
         completion_tokens=domain.usage.completion_tokens,
         total_tokens=domain.usage.total_tokens,
     )
-    created_ts = int(domain.created_at.timestamp()) if hasattr(domain.created_at, "timestamp") else 0
+    created_ts = (
+        int(domain.created_at.timestamp()) if hasattr(domain.created_at, "timestamp") else 0
+    )
     return ChatCompletionResponse(
         id=domain.request_id,
         object="chat.completion",
@@ -112,4 +109,3 @@ def to_api_chat_completion_response(domain: ChatResponse) -> ChatCompletionRespo
         ],
         usage=usage,
     )
-

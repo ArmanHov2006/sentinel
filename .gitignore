@@ -1,8 +1,11 @@
 .env
+.env.local
 .venv/
+venv/
 __pycache__/
 *.pyc
 .pytest_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 .tox/
@@ -11,4 +14,6 @@ htmlcov/
 *.egg-info/
 dist/
 build/
-
+sentinel.zip
+SENTINEL_CODE_REVIEW.md
+.claude/

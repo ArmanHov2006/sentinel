@@ -13,23 +13,33 @@ TEXTS = [
     "My credit card number is 1234567890123456",
 ]
 
+
 @pytest.fixture
 def texts():
     return TEXTS
 
+
 def analyze_text(text: str) -> list[dict]:
     """Analyze text for PII entities."""
-    results = analyzer.analyze(text=text, language="en", score_threshold=0.5, entities=["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "LOCATION", "DATE_TIME"])
+    results = analyzer.analyze(
+        text=text,
+        language="en",
+        score_threshold=0.5,
+        entities=["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "LOCATION", "DATE_TIME"],
+    )
     findings = []
     for result in results:
-        findings.append({
-            "type": result.entity_type,
-            "text": text[result.start:result.end],
-            "start": result.start,
-            "end": result.end,
-            "score": result.score,
-        })
+        findings.append(
+            {
+                "type": result.entity_type,
+                "text": text[result.start : result.end],
+                "start": result.start,
+                "end": result.end,
+                "score": result.score,
+            }
+        )
     return findings
+
 
 def test_analyze_text(texts: list[str]):
     """Run analysis on sample texts and assert expected PII is detected."""
@@ -38,8 +48,9 @@ def test_analyze_text(texts: list[str]):
         assert isinstance(findings, list)
         for item in findings:
             assert "type" in item and "text" in item and "score" in item
-            assert item["text"] == text[item["start"]:item["end"]]
+            assert item["text"] == text[item["start"] : item["end"]]
             assert 0 <= item["score"] <= 1
+
 
 if __name__ == "__main__":
     for i, text in enumerate(TEXTS, 1):

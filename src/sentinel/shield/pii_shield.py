@@ -1,14 +1,13 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 from sentinel.domain.models import PIIEntity
-
 from sentinel.shield.pii_detector import PIIDetector
 
 
 class PIIAction(Enum):
     """Actions to take when a PII entity is detected."""
+
     BLOCK = "block"
     REDACT = "redact"
     WARN = "warn"
@@ -17,9 +16,10 @@ class PIIAction(Enum):
 @dataclass
 class PIIResult:
     """Result of running PII shield on a request."""
+
     action: PIIAction
     findings: list[PIIEntity]
-    processed_text: Optional[str] = None
+    processed_text: str | None = None
     should_block: bool = False
 
 
@@ -48,7 +48,12 @@ class PIIShield:
             processed_text = self._redact_text(text, findings)
         else:
             processed_text = None
-        return PIIResult(action=self.action, findings=findings, processed_text=processed_text, should_block=should_block)
+        return PIIResult(
+            action=self.action,
+            findings=findings,
+            processed_text=processed_text,
+            should_block=should_block,
+        )
 
     def scan_messages(self, messages: list[dict]) -> dict[int, PIIResult]:
         """Scan messages for PII. Returns dict mapping message index to PIIResult (only indices where PII was found)."""
@@ -60,7 +65,12 @@ class PIIShield:
                 processed_text = self._redact_text(messages[i].get("content", ""), findings)
             else:
                 processed_text = None
-            out[i] = PIIResult(action=self.action, findings=findings, processed_text=processed_text, should_block=should_block)
+            out[i] = PIIResult(
+                action=self.action,
+                findings=findings,
+                processed_text=processed_text,
+                should_block=should_block,
+            )
         return out
 
     def _redact_text(self, text: str, findings: list[PIIEntity]) -> str:

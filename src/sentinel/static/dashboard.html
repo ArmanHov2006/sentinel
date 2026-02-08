@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sentinel — Monitoring Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+    <style>
+        /* ================================================================
+           CSS VARIABLES
+           ================================================================ */
+        :root {
+            --bg: #0f0f1a;
+            --card-bg: #1a1a2e;
+            --card-border: #16213e;
+            --accent: #e94560;
+            --accent-secondary: #0f3460;
+            --text: #eee;
+            --text-secondary: #8892b0;
+            --healthy: #00d4aa;
+            --warning: #ffd93d;
+            --error: #e94560;
+        }
+
+        /* ================================================================
+           RESET & BASE
+           ================================================================ */
+        *, *::before, *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ================================================================
+           TOP BAR
+           ================================================================ */
+        .top-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 56px;
+            background: rgba(26, 26, 46, 0.92);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--card-border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 24px;
+            z-index: 100;
+        }
+
+        .top-bar-title {
+            font-size: 17px;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+            white-space: nowrap;
+        }
+
+        .top-bar-title span {
+            color: var(--accent);
+        }
+
+        .top-bar-center {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .status-badge {
+            padding: 5px 20px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 1.2px;
+            text-transform: uppercase;
+            transition: all 0.3s ease;
+        }
+
+        .status-badge.healthy {
+            background: rgba(0, 212, 170, 0.12);
+            color: var(--healthy);
+            border: 1px solid rgba(0, 212, 170, 0.25);
+        }
+
+        .status-badge.degraded {
+            background: rgba(255, 217, 61, 0.12);
+            color: var(--warning);
+            border: 1px solid rgba(255, 217, 61, 0.25);
+        }
+
+        .status-badge.unhealthy {
+            background: rgba(233, 69, 96, 0.12);
+            color: var(--error);
+            border: 1px solid rgba(233, 69, 96, 0.25);
+        }
+
+        .top-bar-right {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+        }
+
+        .conn-status {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            flex-shrink: 0;
+        }
+
+        .dot.connected {
+            background: var(--healthy);
+            box-shadow: 0 0 6px rgba(0, 212, 170, 0.5);
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        .dot.disconnected {
+            background: var(--error);
+            box-shadow: 0 0 6px rgba(233, 69, 96, 0.5);
+        }
+
+        .clock {
+            font-size: 12px;
+            color: var(--text-secondary);
+            font-variant-numeric: tabular-nums;
+            min-width: 72px;
+            text-align: right;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        /* ================================================================
+           MAIN LAYOUT
+           ================================================================ */
+        main {
+            padding: 72px 20px 28px;
+            max-width: 1400px;
+            margin: 0 auto;
+            animation: fadeIn 0.4s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        .grid-4 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 14px;
+            margin-bottom: 14px;
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+            gap: 14px;
+            margin-bottom: 14px;
+        }
+
+        .grid-3 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 14px;
+        }
+
+        /* ================================================================
+           CARDS
+           ================================================================ */
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+        }
+
+        .card-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1.6px;
+            color: var(--text-secondary);
+            margin-bottom: 10px;
+        }
+
+        .card-value {
+            font-size: 34px;
+            font-weight: 700;
+            line-height: 1.15;
+            font-variant-numeric: tabular-nums;
+            transition: color 0.3s ease;
+        }
+
+        .card-value .unit {
+            font-size: 0.45em;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-left: 2px;
+        }
+
+        .card-sub {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 6px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .card-title {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* ================================================================
+           PROGRESS BAR (Cache Hit Rate)
+           ================================================================ */
+        .progress-track {
+            height: 5px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.06);
+            margin-top: 10px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.5s ease, background-color 0.3s ease;
+        }
+
+        /* ================================================================
+           CHARTS
+           ================================================================ */
+        .chart-wrap {
+            position: relative;
+            height: 260px;
+        }
+
+        /* ================================================================
+           SECURITY PANEL
+           ================================================================ */
+        .sec-row {
+            display: flex;
+            align-items: center;
+            padding: 9px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        .sec-row:last-child { border-bottom: none; }
+
+        .sec-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            flex: 0 0 130px;
+        }
+
+        .sec-bar-track {
+            flex: 1;
+            height: 4px;
+            border-radius: 2px;
+            background: rgba(255, 255, 255, 0.04);
+            margin: 0 12px;
+            overflow: hidden;
+        }
+
+        .sec-bar {
+            height: 100%;
+            border-radius: 2px;
+            transition: width 0.5s ease;
+        }
+
+        .sec-val {
+            font-size: 13px;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            flex: 0 0 48px;
+            text-align: right;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 24px 0;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .empty-state.ok {
+            color: var(--healthy);
+        }
+
+        /* ================================================================
+           CIRCUIT BREAKER CARDS
+           ================================================================ */
+        .cb-card {
+            background: rgba(255, 255, 255, 0.025);
+            border: 1px solid var(--card-border);
+            border-radius: 8px;
+            padding: 12px 14px;
+            margin-bottom: 8px;
+            transition: border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .cb-card:last-child { margin-bottom: 0; }
+
+        .cb-card.open-state {
+            border-color: rgba(233, 69, 96, 0.35);
+            box-shadow: 0 0 18px rgba(233, 69, 96, 0.08);
+        }
+
+        .cb-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }
+
+        .cb-name {
+            font-weight: 600;
+            font-size: 13px;
+            text-transform: capitalize;
+        }
+
+        .cb-pill {
+            padding: 2px 10px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+
+        .cb-pill.closed    { background: rgba(0, 212, 170, 0.12); color: var(--healthy); }
+        .cb-pill.half-open { background: rgba(255, 217, 61, 0.12); color: var(--warning); }
+        .cb-pill.open       { background: rgba(233, 69, 96, 0.12); color: var(--error); }
+
+        .cb-detail {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        /* ================================================================
+           REDIS PANEL
+           ================================================================ */
+        .redis-conn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            margin-bottom: 14px;
+        }
+
+        .redis-big {
+            font-size: 30px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            transition: color 0.3s ease;
+        }
+
+        .redis-big .unit {
+            font-size: 0.45em;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-left: 2px;
+        }
+
+        .redis-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1.4px;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+
+        .sparkline-wrap {
+            width: 100%;
+            height: 44px;
+            margin-top: 12px;
+            border-radius: 6px;
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .sparkline-wrap canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* ================================================================
+           RESPONSIVE
+           ================================================================ */
+        @media (max-width: 820px) {
+            main { padding: 68px 12px 16px; }
+            .grid-4, .grid-2, .grid-3 { grid-template-columns: 1fr 1fr; }
+            .card-value { font-size: 28px; }
+            .top-bar-title { font-size: 15px; }
+        }
+
+        @media (max-width: 560px) {
+            .grid-4, .grid-2, .grid-3 { grid-template-columns: 1fr; }
+            .top-bar-center { display: none; }
+            .clock { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ================================================================
+     TOP BAR
+     ================================================================ -->
+<header class="top-bar">
+    <div class="top-bar-title">&#9889; <span>Sentinel</span> Gateway</div>
+    <div class="top-bar-center">
+        <span id="sys-status" class="status-badge healthy">HEALTHY</span>
+    </div>
+    <div class="top-bar-right">
+        <div class="conn-status">
+            <span id="conn-dot" class="dot connected"></span>
+            <span id="conn-text">Connected</span>
+        </div>
+        <span id="clock" class="clock">--:--:--</span>
+    </div>
+</header>
+
+<!-- ================================================================
+     MAIN CONTENT
+     ================================================================ -->
+<main>
+
+    <!-- Row 1 ─ Key Metric Cards -->
+    <section class="grid-4">
+        <div class="card">
+            <div class="card-label">Uptime</div>
+            <div class="card-value" id="val-uptime">0s</div>
+            <div class="card-sub" id="sub-uptime">since &mdash;</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Total Requests</div>
+            <div class="card-value" id="val-reqs">0</div>
+            <div class="card-sub" id="sub-reqs">~0.0 req/min</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Avg Response Time</div>
+            <div class="card-value" id="val-rt">0<span class="unit">ms</span></div>
+            <div class="card-sub" id="sub-rt">p95: 0ms &middot; p99: 0ms</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Cache Hit Rate</div>
+            <div class="card-value" id="val-cache">0<span class="unit">%</span></div>
+            <div class="progress-track">
+                <div class="progress-fill" id="cache-bar" style="width:0%;background:var(--error)"></div>
+            </div>
+            <div class="card-sub" id="sub-cache">0 / 0 requests</div>
+        </div>
+    </section>
+
+    <!-- Row 2 ─ Charts -->
+    <section class="grid-2">
+        <div class="card">
+            <div class="card-title">Response Times</div>
+            <div class="chart-wrap">
+                <canvas id="chartRT"></canvas>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-title">Status Code Distribution</div>
+            <div class="chart-wrap">
+                <canvas id="chartStatus"></canvas>
+            </div>
+        </div>
+    </section>
+
+    <!-- Row 3 ─ Detail Panels -->
+    <section class="grid-3">
+        <div class="card">
+            <div class="card-title">&#128737;&#65039; Security</div>
+            <div id="security-body">
+                <div class="empty-state ok">&#10003; No security events</div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-title">&#9889; Circuit Breakers</div>
+            <div id="cb-body">
+                <div class="empty-state">No providers configured</div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-title">&#128452;&#65039; Redis</div>
+            <div id="redis-body">
+                <div class="redis-conn">
+                    <span id="redis-dot" class="dot disconnected"></span>
+                    <span id="redis-text">Unknown</span>
+                </div>
+                <div class="redis-label">Latency</div>
+                <div class="redis-big" id="redis-lat">&mdash;<span class="unit">ms</span></div>
+                <div class="sparkline-wrap">
+                    <canvas id="redis-spark"></canvas>
+                </div>
+            </div>
+        </div>
+    </section>
+
+</main>
+
+<!-- ================================================================
+     JAVASCRIPT
+     ================================================================ -->
+<script>
+(function () {
+    'use strict';
+
+    /* ── constants ── */
+    var MAX_POINTS  = 60;
+    var MAX_SPARK   = 20;
+    var TICK_MS     = 3000;
+
+    /* ── state ── */
+    var connected       = false;
+    var rtChart         = null;
+    var scChart         = null;
+    var doughnutTotal   = '0';
+
+    var hist = {
+        p50: [], p95: [], p99: [], labels: [],
+        redisLat: []
+    };
+
+    /* ==============================================================
+       UTILITIES
+       ============================================================== */
+    function fmt(n)     { return n.toLocaleString(); }
+    function fmtF(n, d) { return Number(n).toFixed(d); }
+
+    function fmtUptime(sec) {
+        var d = Math.floor(sec / 86400);
+        var h = Math.floor((sec % 86400) / 3600);
+        var m = Math.floor((sec % 3600) / 60);
+        var s = Math.floor(sec % 60);
+        if (d > 0) return d + 'd ' + h + 'h ' + m + 'm';
+        if (h > 0) return h + 'h ' + m + 'm ' + s + 's';
+        if (m > 0) return m + 'm ' + s + 's';
+        return s + 's';
+    }
+
+    function timeLabel() {
+        var d = new Date();
+        return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+    }
+
+    function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+
+    function colorByThresh(val, lo, hi) {
+        if (val < lo) return 'var(--healthy)';
+        if (val < hi) return 'var(--warning)';
+        return 'var(--error)';
+    }
+
+    function aggregate(byStatus) {
+        var s2 = 0, s4 = 0, s5 = 0;
+        for (var code in byStatus) {
+            var c = parseInt(code, 10);
+            if (c >= 200 && c < 300) s2 += byStatus[code];
+            else if (c >= 400 && c < 500) s4 += byStatus[code];
+            else if (c >= 500) s5 += byStatus[code];
+        }
+        return [s2, s4, s5];
+    }
+
+    function pushBounded(arr, val, max) {
+        arr.push(val);
+        if (arr.length > max) arr.shift();
+    }
+
+    /* ==============================================================
+       CHART.JS — CENTER TEXT PLUGIN (doughnut)
+       ============================================================== */
+    var centerPlugin = {
+        id: 'doughnutCenter',
+        afterDraw: function (chart) {
+            if (chart.config.type !== 'doughnut') return;
+            var area = chart.chartArea;
+            if (!area) return;
+            var cx = (area.left + area.right)  / 2;
+            var cy = (area.top  + area.bottom) / 2;
+            var ctx = chart.ctx;
+            ctx.save();
+            ctx.textAlign    = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = "bold 24px 'Segoe UI', system-ui, sans-serif";
+            ctx.fillStyle = '#eee';
+            ctx.fillText(doughnutTotal, cx, cy - 8);
+            ctx.font = "11px 'Segoe UI', system-ui, sans-serif";
+            ctx.fillStyle = '#8892b0';
+            ctx.fillText('requests', cx, cy + 14);
+            ctx.restore();
+        }
+    };
+
+    /* ==============================================================
+       CHART INITIALIZATION
+       ============================================================== */
+    function initCharts() {
+        if (typeof Chart === 'undefined') return;
+
+        Chart.defaults.color      = '#8892b0';
+        Chart.defaults.borderColor = 'rgba(255,255,255,0.05)';
+        Chart.defaults.font.family = "'Segoe UI', system-ui, -apple-system, sans-serif";
+
+        /* ── Response-time line chart ── */
+        var lineCtx  = document.getElementById('chartRT').getContext('2d');
+        var gradient = lineCtx.createLinearGradient(0, 0, 0, 260);
+        gradient.addColorStop(0, 'rgba(0,212,170,0.12)');
+        gradient.addColorStop(1, 'rgba(0,212,170,0)');
+
+        rtChart = new Chart(lineCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: 'p50',
+                        data: [],
+                        borderColor: '#00d4aa',
+                        backgroundColor: gradient,
+                        fill: true,
+                        tension: 0.35,
+                        pointRadius: 0,
+                        borderWidth: 2
+                    },
+                    {
+                        label: 'p95',
+                        data: [],
+                        borderColor: '#ffd93d',
+                        fill: false,
+                        tension: 0.35,
+                        pointRadius: 0,
+                        borderWidth: 2
+                    },
+                    {
+                        label: 'p99',
+                        data: [],
+                        borderColor: '#e94560',
+                        fill: false,
+                        tension: 0.35,
+                        pointRadius: 0,
+                        borderWidth: 2
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 280 },
+                interaction: { mode: 'index', intersect: false },
+                scales: {
+                    x: {
+                        ticks: { maxTicksLimit: 8, font: { size: 10 } },
+                        grid: { color: 'rgba(255,255,255,0.04)' }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        ticks: { font: { size: 10 } },
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        title: { display: true, text: 'ms', font: { size: 10 } }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        labels: { usePointStyle: true, pointStyle: 'circle', padding: 18, font: { size: 11 } }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(26,26,46,0.95)',
+                        borderColor: '#16213e',
+                        borderWidth: 1,
+                        titleFont: { size: 11 },
+                        bodyFont: { size: 11 },
+                        callbacks: {
+                            label: function (ctx) { return ctx.dataset.label + ': ' + fmtF(ctx.parsed.y, 1) + ' ms'; }
+                        }
+                    }
+                }
+            }
+        });
+
+        /* ── Status-code doughnut chart ── */
+        var dCtx = document.getElementById('chartStatus').getContext('2d');
+        scChart = new Chart(dCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['2xx', '4xx', '5xx'],
+                datasets: [{
+                    data: [0, 0, 0],
+                    backgroundColor: ['#00d4aa', '#ffd93d', '#e94560'],
+                    borderWidth: 0,
+                    cutout: '72%',
+                    hoverOffset: 6
+                }]
+            },
+            plugins: [centerPlugin],
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 280 },
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            usePointStyle: true,
+                            pointStyle: 'circle',
+                            padding: 16,
+                            font: { size: 11 },
+                            generateLabels: function (chart) {
+                                var ds = chart.data.datasets[0];
+                                if (chart.data.labels[0] === 'No data') {
+                                    return [{ text: 'No data yet', fillStyle: 'rgba(255,255,255,0.05)', pointStyle: 'circle', hidden: false }];
+                                }
+                                return chart.data.labels.map(function (lbl, i) {
+                                    return {
+                                        text: lbl + ': ' + fmt(ds.data[i] || 0),
+                                        fillStyle: ds.backgroundColor[i],
+                                        pointStyle: 'circle',
+                                        hidden: false,
+                                        index: i
+                                    };
+                                });
+                            }
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(26,26,46,0.95)',
+                        borderColor: '#16213e',
+                        borderWidth: 1
+                    }
+                }
+            }
+        });
+    }
+
+    /* ==============================================================
+       DATA FETCH
+       ============================================================== */
+    function fetchData() {
+        Promise.all([
+            fetch('/metrics'),
+            fetch('/health')
+        ]).then(function (responses) {
+            if (!responses[0].ok || !responses[1].ok) throw new Error('bad');
+            return Promise.all([responses[0].json(), responses[1].json()]);
+        }).then(function (data) {
+            setConn(true);
+            refresh(data[0], data[1]);
+        }).catch(function () {
+            setConn(false);
+        });
+    }
+
+    function setConn(ok) {
+        if (ok === connected) return;
+        connected = ok;
+        var dot  = document.getElementById('conn-dot');
+        var text = document.getElementById('conn-text');
+        dot.className  = 'dot ' + (ok ? 'connected' : 'disconnected');
+        text.textContent = ok ? 'Connected' : 'Disconnected';
+    }
+
+    /* ==============================================================
+       MASTER REFRESH
+       ============================================================== */
+    function refresh(m, h) {
+        updTopBar(h);
+        updCards(m, h);
+        updRTChart(m);
+        updSCChart(m);
+        updSecurity(m);
+        updCBs(h);
+        updRedis(h);
+    }
+
+    /* ── top bar ── */
+    function updTopBar(h) {
+        var badge  = document.getElementById('sys-status');
+        var status = (h.status || 'healthy');
+        badge.textContent = status.toUpperCase();
+        badge.className   = 'status-badge ' + status;
+    }
+
+    /* ── metric cards ── */
+    function updCards(m, h) {
+        var up    = h.uptime_seconds || 0;
+        var total = (m.requests && m.requests.total) || 0;
+        var avg   = (m.performance && m.performance.avg_response_time_ms) || 0;
+        var p95   = (m.performance && m.performance.p95_response_time_ms) || 0;
+        var p99   = (m.performance && m.performance.p99_response_time_ms) || 0;
+        var hr    = ((m.cache && m.cache.hit_rate) || 0) * 100;
+        var hits  = (m.cache && m.cache.hits) || 0;
+        var miss  = (m.cache && m.cache.misses) || 0;
+
+        /* uptime */
+        document.getElementById('val-uptime').textContent = fmtUptime(up);
+        if (h.timestamp) {
+            var st = new Date(new Date(h.timestamp).getTime() - up * 1000);
+            document.getElementById('sub-uptime').textContent = 'since ' + st.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+
+        /* total requests */
+        document.getElementById('val-reqs').textContent = fmt(total);
+        var rpm = up > 0 ? (total / up * 60).toFixed(1) : '0.0';
+        document.getElementById('sub-reqs').textContent = '~' + rpm + ' req/min';
+
+        /* avg response time */
+        var rtEl = document.getElementById('val-rt');
+        rtEl.innerHTML = fmtF(avg, 1) + '<span class="unit">ms</span>';
+        rtEl.style.color = colorByThresh(avg, 500, 2000);
+        document.getElementById('sub-rt').textContent =
+            'p95: ' + Math.round(p95) + 'ms \u00B7 p99: ' + Math.round(p99) + 'ms';
+
+        /* cache hit rate */
+        var cEl = document.getElementById('val-cache');
+        cEl.innerHTML = fmtF(hr, 1) + '<span class="unit">%</span>';
+        var bar = document.getElementById('cache-bar');
+        bar.style.width = Math.min(hr, 100) + '%';
+        bar.style.background = hr > 50 ? 'var(--healthy)' : hr > 20 ? 'var(--warning)' : 'var(--error)';
+        document.getElementById('sub-cache').textContent =
+            fmt(hits) + ' / ' + fmt(hits + miss) + ' requests';
+    }
+
+    /* ── response-time chart ── */
+    function updRTChart(m) {
+        if (!rtChart) return;
+        var perf = m.performance || {};
+        pushBounded(hist.p50,    perf.p50_response_time_ms || 0, MAX_POINTS);
+        pushBounded(hist.p95,    perf.p95_response_time_ms || 0, MAX_POINTS);
+        pushBounded(hist.p99,    perf.p99_response_time_ms || 0, MAX_POINTS);
+        pushBounded(hist.labels, timeLabel(),                     MAX_POINTS);
+
+        rtChart.data.labels           = hist.labels.slice();
+        rtChart.data.datasets[0].data = hist.p50.slice();
+        rtChart.data.datasets[1].data = hist.p95.slice();
+        rtChart.data.datasets[2].data = hist.p99.slice();
+        rtChart.update();
+    }
+
+    /* ── status-code chart ── */
+    function updSCChart(m) {
+        if (!scChart) return;
+        var byS   = (m.requests && m.requests.by_status) || {};
+        var parts  = aggregate(byS);
+        var total  = parts[0] + parts[1] + parts[2];
+        doughnutTotal = fmt(total);
+
+        if (total === 0) {
+            scChart.data.labels = ['No data'];
+            scChart.data.datasets[0].data = [1];
+            scChart.data.datasets[0].backgroundColor = ['rgba(255,255,255,0.04)'];
+        } else {
+            scChart.data.labels = ['2xx', '4xx', '5xx'];
+            scChart.data.datasets[0].data = parts;
+            scChart.data.datasets[0].backgroundColor = ['#00d4aa', '#ffd93d', '#e94560'];
+        }
+        scChart.update();
+    }
+
+    /* ── security panel ── */
+    function updSecurity(m) {
+        var sec = m.security || {};
+        var items = [
+            { label: 'PII Detections', val: sec.pii_detections       || 0, color: '#e94560' },
+            { label: 'PII Blocked',    val: sec.pii_blocks           || 0, color: '#ff4d6d' },
+            { label: 'Injection Det.', val: sec.injection_detections || 0, color: '#e94560' },
+            { label: 'Injection Block',val: sec.injection_blocks     || 0, color: '#ff4d6d' },
+            { label: 'Rate Limited',   val: sec.rate_limit_rejections || 0, color: '#ffd93d' },
+            { label: 'CB Trips',       val: sec.circuit_breaker_trips || 0, color: '#ff8c42' }
+        ];
+
+        var el = document.getElementById('security-body');
+
+        if (items.every(function (i) { return i.val === 0; })) {
+            el.innerHTML = '<div class="empty-state ok">&#10003; No security events</div>';
+            return;
+        }
+
+        var mx = Math.max.apply(null, items.map(function (i) { return i.val; })) || 1;
+
+        el.innerHTML = items.map(function (it) {
+            var pct = (it.val / mx * 100).toFixed(1);
+            return '<div class="sec-row">' +
+                '<span class="sec-label">' + it.label + '</span>' +
+                '<div class="sec-bar-track"><div class="sec-bar" style="width:' + pct + '%;background:' + it.color + '"></div></div>' +
+                '<span class="sec-val">' + fmt(it.val) + '</span>' +
+                '</div>';
+        }).join('');
+    }
+
+    /* ── circuit breakers ── */
+    function updCBs(h) {
+        var cbs = (h.checks && h.checks.circuit_breakers) || {};
+        var keys = Object.keys(cbs);
+        var el = document.getElementById('cb-body');
+
+        if (keys.length === 0) {
+            el.innerHTML = '<div class="empty-state">No providers configured</div>';
+            return;
+        }
+
+        el.innerHTML = keys.map(function (name) {
+            var cb = cbs[name];
+            var state = cb.state || 'CLOSED';
+            var pillClass = state === 'HALF_OPEN' ? 'half-open' : state.toLowerCase();
+            var isOpen = state === 'OPEN';
+            var lastF = cb.last_failure ? new Date(cb.last_failure).toLocaleString() : 'None';
+            return '<div class="cb-card' + (isOpen ? ' open-state' : '') + '">' +
+                '<div class="cb-head">' +
+                    '<span class="cb-name">' + name + '</span>' +
+                    '<span class="cb-pill ' + pillClass + '">' + state + '</span>' +
+                '</div>' +
+                '<div class="cb-detail">Failures: ' + cb.failure_count + ' &middot; Last: ' + lastF + '</div>' +
+                '</div>';
+        }).join('');
+    }
+
+    /* ── redis panel ── */
+    function updRedis(h) {
+        var r = (h.checks && h.checks.redis) || {};
+        var ok = r.status === 'healthy';
+        var lat = r.latency_ms || 0;
+
+        document.getElementById('redis-dot').className  = 'dot ' + (ok ? 'connected' : 'disconnected');
+        document.getElementById('redis-text').textContent = ok ? 'Connected' : 'Disconnected';
+
+        var latEl = document.getElementById('redis-lat');
+        latEl.innerHTML = fmtF(lat, 1) + '<span class="unit">ms</span>';
+        latEl.style.color = colorByThresh(lat, 5, 50);
+
+        pushBounded(hist.redisLat, lat, MAX_SPARK);
+        drawSparkline();
+    }
+
+    /* ==============================================================
+       SPARKLINE (raw canvas)
+       ============================================================== */
+    function drawSparkline() {
+        var canvas = document.getElementById('redis-spark');
+        if (!canvas) return;
+        var data = hist.redisLat;
+        var dpr  = window.devicePixelRatio || 1;
+        var rect = canvas.getBoundingClientRect();
+        var w = rect.width;
+        var h = rect.height;
+        canvas.width  = w * dpr;
+        canvas.height = h * dpr;
+        var ctx = canvas.getContext('2d');
+        ctx.scale(dpr, dpr);
+        ctx.clearRect(0, 0, w, h);
+
+        if (data.length < 2) return;
+
+        var max  = Math.max.apply(null, data) || 1;
+        var step = w / (data.length - 1);
+        var pad  = 3;
+
+        /* area fill */
+        ctx.beginPath();
+        ctx.moveTo(0, h);
+        for (var i = 0; i < data.length; i++) {
+            var x = i * step;
+            var y = h - pad - (data[i] / max) * (h - 2 * pad);
+            ctx.lineTo(x, y);
+        }
+        ctx.lineTo((data.length - 1) * step, h);
+        ctx.closePath();
+        var grd = ctx.createLinearGradient(0, 0, 0, h);
+        grd.addColorStop(0, 'rgba(0,212,170,0.14)');
+        grd.addColorStop(1, 'rgba(0,212,170,0)');
+        ctx.fillStyle = grd;
+        ctx.fill();
+
+        /* line */
+        ctx.beginPath();
+        for (var j = 0; j < data.length; j++) {
+            var lx = j * step;
+            var ly = h - pad - (data[j] / max) * (h - 2 * pad);
+            if (j === 0) ctx.moveTo(lx, ly); else ctx.lineTo(lx, ly);
+        }
+        ctx.strokeStyle = '#00d4aa';
+        ctx.lineWidth   = 1.5;
+        ctx.lineJoin    = 'round';
+        ctx.stroke();
+    }
+
+    /* ==============================================================
+       CLOCK
+       ============================================================== */
+    function tickClock() {
+        var d = new Date();
+        document.getElementById('clock').textContent =
+            pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+    }
+
+    /* ==============================================================
+       BOOT
+       ============================================================== */
+    document.addEventListener('DOMContentLoaded', function () {
+        initCharts();
+        tickClock();
+        setInterval(tickClock, 1000);
+        fetchData();
+        setInterval(fetchData, TICK_MS);
+    });
+
+})();
+</script>
+</body>
+</html>

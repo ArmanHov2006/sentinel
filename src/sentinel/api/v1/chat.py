@@ -19,15 +19,33 @@ from sentinel.api.schemas.chat import (
     MessageSchema,
     UsageSchema,
 )
+from sentinel.core.metrics import metrics
 from sentinel.shield.pii_shield import PIIAction
+from sentinel.shield.prompt_injection_detector import InjectionAction
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/v1")
+router = APIRouter(prefix="/v1", tags=["Chat"])
 
 
 async def fake_stream_response():
-    words = ["Hello", " ", "world", " ", "this", " ", "is", " ", "a", " ", "test", " ", "message", ".", "!"]
+    words = [
+        "Hello",
+        " ",
+        "world",
+        " ",
+        "this",
+        " ",
+        "is",
+        " ",
+        "a",
+        " ",
+        "test",
+        " ",
+        "message",
+        ".",
+        "!",
+    ]
     for word in words:
         chunk = {"choices": [{"delta": {"content": word}}]}
         yield f"data: {json.dumps(chunk)}\n\n"
@@ -35,31 +53,47 @@ async def fake_stream_response():
     yield "data: [DONE]\n\n"
 
 
-@router.post("/chat/completions")
+@router.post(
+    "/chat/completions",
+    response_model=ChatCompletionResponse,
+    responses={
+        200: {"description": "Successful completion"},
+        400: {
+            "description": "Request blocked (PII or prompt injection detected)",
+            "content": {
+                "application/json": {"example": {"detail": "Request blocked: prompt injection detected"}}
+            },
+        },
+        429: {
+            "description": "Rate limit exceeded",
+            "content": {"application/json": {"example": {"detail": "Rate limit exceeded"}}},
+        },
+    },
+    summary="Create chat completion",
+    description="Send a chat completion request through the full Sentinel pipeline: "
+    "rate limiting, PII detection, caching, circuit breaker, and retry. "
+    "Compatible with the OpenAI chat completions API format.",
+)
 async def create_chat_completion(
-    chat_request: ChatCompletionRequest,
-    request: Request,
-    response: Response
+    chat_request: ChatCompletionRequest, request: Request, response: Response
 ):
     # 1. Rate limiting (FIRST — protect resources)
     client_ip = request.client.host if request.client else "unknown"
     rate_limiter = getattr(request.app.state, "rate_limiter", None)
-    
+
     if rate_limiter:
         allowed = await rate_limiter.is_allowed(client_ip)
         if not allowed:
-            remaining = await rate_limiter.get_remaining(client_ip)
             raise HTTPException(
                 status_code=429,
                 detail="Rate limit exceeded",
-                headers={"Retry-After": str(rate_limiter.window_seconds)}
+                headers={"Retry-After": str(rate_limiter.window_seconds)},
             )
-        
+
         # Add rate limit headers
         remaining = await rate_limiter.get_remaining(client_ip)
         response.headers["X-RateLimit-Limit"] = str(rate_limiter.max_requests)
         response.headers["X-RateLimit-Remaining"] = str(remaining)
-    
 
     # 2. PII shield
     pii_shield = getattr(request.app.state, "pii_shield", None)
@@ -67,7 +101,9 @@ async def create_chat_completion(
         messages_as_dicts = [{"role": m.role, "content": m.content} for m in chat_request.messages]
         results = pii_shield.scan_messages(messages_as_dicts)
         if results:
+            metrics.increment("pii_detections")
             if any(r.should_block for r in results.values()):
+                metrics.increment("pii_blocks")
                 raise HTTPException(
                     status_code=400,
                     detail="Invalid request due to PII detected",
@@ -87,7 +123,27 @@ async def create_chat_completion(
                     pii_types = [f.type.value for f in result.findings]
                     logger.warning("PII detected in message %d: %s", idx, pii_types)
 
-    # 3. Streaming branch
+    # 3. Injection detector (after PII, before cache)
+    injection_detector = getattr(request.app.state, "injection_detector", None)
+    if injection_detector is not None:
+        messages_as_dicts = [{"role": m.role, "content": m.content} for m in chat_request.messages]
+        injection_result = injection_detector.scan(messages_as_dicts)
+        if injection_result.is_suspicious:
+            metrics.increment("injection_detections")
+        if injection_result.action == InjectionAction.BLOCK:
+            metrics.increment("injection_blocks")
+            raise HTTPException(
+                status_code=400,
+                detail="Request blocked: prompt injection detected",
+            )
+        if injection_result.action == InjectionAction.WARN:
+            logger.warning(
+                "Prompt injection (WARN): score=%.3f, patterns=%s",
+                injection_result.risk_score,
+                injection_result.matched_rules,
+            )
+
+    # 4. Streaming branch
     if chat_request.stream:
         return StreamingResponse(
             fake_stream_response(),
@@ -99,7 +155,7 @@ async def create_chat_completion(
             },
         )
 
-    # 4. Non-streaming branch with optional cache
+    # 5. Non-streaming branch with optional cache
     cache = getattr(request.app.state, "cache", None)
     cache_key: str | None = None
 

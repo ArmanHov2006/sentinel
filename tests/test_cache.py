@@ -1,17 +1,18 @@
 """Tests for CacheService implementation."""
 
+import json
 import os
 import sys
+from unittest.mock import AsyncMock
+
 import pytest
-import json
-from unittest.mock import AsyncMock, MagicMock
 import redis.asyncio as redis
 
 # Add src to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from sentinel.services.cache import CacheService
 from sentinel.api.schemas.chat import MessageSchema
+from sentinel.services.cache import CacheService
 
 
 class TestCacheService:

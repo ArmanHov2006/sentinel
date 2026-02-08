@@ -1,45 +1,36 @@
-"""Tests for Sentinel-specific additions."""
+"""Tests for domain models and exceptions."""
 
 import os
 import sys
+
 import pytest
 
-# Add src to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-# Set required environment variable for testing
 os.environ.setdefault("openai_api_key", "test-key-for-testing")
 
-from sentinel.domain.models import (
-    GuardrailAction,
-    PIIType,
-    PIIEntity,
-    GuardrailResult,
-    JudgeScore,
-    StreamChunk,
-    FinishReason,
-)
 from sentinel.domain.exceptions import (
-    GuardrailError,
-    ContentBlockedError,
-    PIIDetectedError,
-    CacheError,
-    CacheConnectionError,
-    CacheSerializationError,
+    CircuitOpenError,
+    ProviderError,
+    ProviderRateLimitError,
+    ProviderUnavailableError,
     SentinelError,
 )
-
+from sentinel.domain.models import (
+    ChatRequest,
+    ChatResponse,
+    FinishReason,
+    Message,
+    ModelParameters,
+    PIIEntity,
+    PIIType,
+    Role,
+    TokenUsage,
+)
 
 # =============================================================================
 # ENUM TESTS
 # =============================================================================
-
-class TestGuardrailAction:
-    def test_equals_string(self):
-        assert GuardrailAction.ALLOW == "allow"
-        assert GuardrailAction.BLOCK == "block"
-        assert GuardrailAction.REDACT == "redact"
-        assert GuardrailAction.WARN == "warn"
 
 
 class TestPIIType:
@@ -49,215 +40,148 @@ class TestPIIType:
         assert PIIType.SSN == "ssn"
         assert PIIType.CREDIT_CARD == "credit_card"
 
+    def test_all_values(self):
+        assert len(PIIType) == 8
+
+
+class TestRole:
+    def test_equals_string(self):
+        assert Role.USER == "user"
+        assert Role.ASSISTANT == "assistant"
+        assert Role.SYSTEM == "system"
+        assert Role.TOOL == "tool"
+
+
+class TestFinishReason:
+    def test_equals_string(self):
+        assert FinishReason.STOP == "stop"
+        assert FinishReason.LENGTH == "length"
+        assert FinishReason.ERROR == "error"
+
 
 # =============================================================================
 # MODEL TESTS
 # =============================================================================
 
+
+class TestMessage:
+    def test_creation(self):
+        msg = Message(role=Role.USER, content="Hello")
+        assert msg.role == Role.USER
+        assert msg.content == "Hello"
+
+    def test_is_frozen(self):
+        msg = Message(role=Role.USER, content="Hello")
+        with pytest.raises(Exception):
+            msg.content = "changed"
+
+
 class TestPIIEntity:
     def test_creation(self):
         pii = PIIEntity(
-            type=PIIType.EMAIL,
-            text="test@example.com",
-            start=0,
-            end=16,
-            confidence=0.95
+            type=PIIType.EMAIL, text="test@example.com", start=0, end=16, confidence=0.95
         )
         assert pii.type == PIIType.EMAIL
         assert pii.text == "test@example.com"
         assert pii.start == 0
         assert pii.end == 16
         assert pii.confidence == 0.95
-    
+
     def test_is_frozen(self):
         pii = PIIEntity(PIIType.EMAIL, "test@test.com", 0, 13, 0.9)
         with pytest.raises(Exception):
             pii.text = "changed"
 
 
-class TestGuardrailResult:
-    def test_allow_action(self):
-        result = GuardrailResult(action=GuardrailAction.ALLOW)
-        assert result.action == GuardrailAction.ALLOW
-        assert result.pii_detected == []
-        assert result.banned_keywords_found == []
-        assert result.processed_content is None
-        assert result.reason is None
-    
-    def test_block_with_pii(self):
-        pii = PIIEntity(
-            type=PIIType.SSN,
-            text="123-45-6789",
-            start=10,
-            end=21,
-            confidence=0.99
-        )
-        result = GuardrailResult(
-            action=GuardrailAction.BLOCK,
-            pii_detected=[pii],
-            reason="SSN detected"
-        )
-        assert result.action == GuardrailAction.BLOCK
-        assert len(result.pii_detected) == 1
-        assert result.pii_detected[0].type == PIIType.SSN
-        assert result.reason == "SSN detected"
-    
-    def test_redact_with_processed_content(self):
-        result = GuardrailResult(
-            action=GuardrailAction.REDACT,
-            pii_detected=[PIIEntity(PIIType.EMAIL, "a@b.com", 0, 7, 0.9)],
-            processed_content="Contact me at [EMAIL_REDACTED]"
-        )
-        assert result.processed_content == "Contact me at [EMAIL_REDACTED]"
-    
-    def test_with_banned_keywords(self):
-        result = GuardrailResult(
-            action=GuardrailAction.BLOCK,
-            banned_keywords_found=["ignore instructions", "jailbreak"]
-        )
-        assert len(result.banned_keywords_found) == 2
+class TestModelParameters:
+    def test_defaults(self):
+        params = ModelParameters()
+        assert params.temperature == 1.0
+        assert params.max_tokens is None
+
+    def test_custom(self):
+        params = ModelParameters(temperature=0.5, max_tokens=100, top_p=0.9)
+        assert params.temperature == 0.5
+        assert params.max_tokens == 100
+        assert params.top_p == 0.9
 
 
-class TestJudgeScore:
-    def test_creation_with_defaults(self):
-        score = JudgeScore(request_id="req-123")
-        assert score.request_id == "req-123"
-        assert score.relevance == 0.0
-        assert score.coherence == 0.0
-        assert score.safety == 0.0
-        assert score.overall_score == 0.0
-        assert score.hallucination_detected is False
-        assert score.toxic_content_detected is False
-        assert score.judge_model == "gpt-4o-mini"
-    
-    def test_creation_with_values(self):
-        score = JudgeScore(
-            request_id="req-456",
-            relevance=0.95,
-            coherence=0.88,
-            safety=1.0,
-            overall_score=0.94,
-            hallucination_detected=False,
-            toxic_content_detected=False
-        )
-        assert score.relevance == 0.95
-        assert score.overall_score == 0.94
-    
-    def test_hallucination_flag(self):
-        score = JudgeScore(
-            request_id="req-789",
-            hallucination_detected=True,
-            overall_score=0.3
-        )
-        assert score.hallucination_detected is True
-    
-    def test_has_timestamp(self):
-        score = JudgeScore(request_id="req-abc")
-        assert score.created_at is not None
+class TestTokenUsage:
+    def test_total_tokens(self):
+        usage = TokenUsage(prompt_tokens=10, completion_tokens=20)
+        assert usage.total_tokens == 30
 
 
-class TestStreamChunk:
-    def test_content_only(self):
-        chunk = StreamChunk(content="Hello")
-        assert chunk.content == "Hello"
-        assert chunk.finish_reason is None
-    
-    def test_with_finish_reason(self):
-        chunk = StreamChunk(content="", finish_reason=FinishReason.STOP)
-        assert chunk.finish_reason == FinishReason.STOP
-    
-    def test_to_sse_format(self):
-        chunk = StreamChunk(content="Hello")
-        sse = chunk.to_sse()
-        
-        # Check format
-        assert sse.startswith("data: ")
-        assert sse.endswith("\n\n")
-        
-        # Check content
-        assert '"content": "Hello"' in sse
-        assert '"finish_reason": null' in sse
-    
-    def test_to_sse_with_finish_reason(self):
-        chunk = StreamChunk(content="", finish_reason=FinishReason.STOP)
-        sse = chunk.to_sse()
-        assert '"finish_reason": "stop"' in sse
-    
-    def test_is_frozen(self):
-        chunk = StreamChunk(content="test")
-        with pytest.raises(Exception):
-            chunk.content = "changed"
+class TestChatRequest:
+    def test_defaults(self):
+        req = ChatRequest()
+        assert req.id is not None
+        assert req.messages == []
+        assert req.model == ""
+
+    def test_with_values(self):
+        msg = Message(role=Role.USER, content="Hi")
+        req = ChatRequest(model="gpt-4", messages=[msg])
+        assert req.model == "gpt-4"
+        assert len(req.messages) == 1
+
+
+class TestChatResponse:
+    def test_creation(self):
+        resp = ChatResponse(
+            request_id="req-1",
+            message=Message(role=Role.ASSISTANT, content="Hello"),
+            model="gpt-4",
+            provider="openai",
+            finish_reason=FinishReason.STOP,
+            usage=TokenUsage(prompt_tokens=5, completion_tokens=10),
+            latency_ms=123.4,
+        )
+        assert resp.request_id == "req-1"
+        assert resp.message.content == "Hello"
+        assert resp.usage.total_tokens == 15
 
 
 # =============================================================================
 # EXCEPTION TESTS
 # =============================================================================
 
-class TestGuardrailError:
-    def test_is_sentinel_error(self):
-        error = GuardrailError("Blocked")
-        assert isinstance(error, SentinelError)
 
-
-class TestContentBlockedError:
+class TestSentinelError:
     def test_creation(self):
-        error = ContentBlockedError(
-            message="Content blocked",
-            reason="banned_keyword"
-        )
-        assert error.message == "Content blocked"
-        assert error.reason == "banned_keyword"
-        assert isinstance(error, GuardrailError)
-    
+        error = SentinelError("Something broke")
+        assert error.message == "Something broke"
+        assert error.details == {}
+
+    def test_with_details(self):
+        error = SentinelError("Failed", details={"key": "value"})
+        assert error.details == {"key": "value"}
+
     def test_to_dict(self):
-        error = ContentBlockedError("Blocked", reason="pii")
+        error = SentinelError("Test")
         d = error.to_dict()
-        assert "message" in d
-        assert d["message"] == "Blocked"
-        assert d["reason"] == "pii"
+        assert d["message"] == "Test"
+        assert d["type"] == "SentinelError"
 
 
-class TestPIIDetectedError:
+class TestProviderError:
     def test_creation(self):
-        error = PIIDetectedError(
-            message="PII detected in request",
-            pii_types=["email", "ssn"]
-        )
-        assert error.pii_types == ["email", "ssn"]
-        assert error.reason == "pii_detected"
-    
-    def test_inheritance(self):
-        error = PIIDetectedError("PII found", pii_types=["phone"])
-        assert isinstance(error, ContentBlockedError)
-        assert isinstance(error, GuardrailError)
+        error = ProviderError("API failed", provider="openai", status_code=500)
+        assert error.provider == "openai"
+        assert error.status_code == 500
         assert isinstance(error, SentinelError)
-    
-    def test_to_dict(self):
-        error = PIIDetectedError("Found PII", pii_types=["email", "name"])
-        d = error.to_dict()
-        assert d["pii_types"] == ["email", "name"]
-        assert d["reason"] == "pii_detected"
+
+    def test_subclasses(self):
+        assert issubclass(ProviderUnavailableError, ProviderError)
+        assert issubclass(ProviderRateLimitError, ProviderError)
 
 
-class TestCacheError:
+class TestCircuitOpenError:
     def test_is_sentinel_error(self):
-        error = CacheError("Redis down")
+        error = CircuitOpenError("Circuit open")
         assert isinstance(error, SentinelError)
-    
-    def test_cache_connection_error(self):
-        error = CacheConnectionError("Connection failed")
-        assert isinstance(error, CacheError)
-        assert isinstance(error, SentinelError)
-    
-    def test_cache_serialization_error(self):
-        error = CacheSerializationError("Serialize failed")
-        assert isinstance(error, CacheError)
-        assert isinstance(error, SentinelError)
+        assert error.message == "Circuit open"
 
-
-# =============================================================================
-# MAIN
-# =============================================================================
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

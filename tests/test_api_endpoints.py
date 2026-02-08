@@ -1,13 +1,14 @@
 """Tests for FastAPI endpoints."""
 
+import json
 import os
 import sys
+
 import pytest
-import json
 from fastapi.testclient import TestClient
 
 # Add src to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from sentinel.main import app
 
@@ -16,34 +17,36 @@ client = TestClient(app)
 
 class TestHealthEndpoint:
     """Test suite for health endpoint."""
-    
+
     def test_health_endpoint(self):
-        """Health endpoint should return healthy status."""
+        """Health endpoint should return valid health status with checks."""
         response = client.get("/health")
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "healthy"
+        assert data["status"] in ("healthy", "degraded", "unhealthy")
         assert data["version"] == "0.1.0"
-        assert "status" in data
-        assert "version" in data
+        assert "timestamp" in data
+        assert "uptime_seconds" in data
+        assert "checks" in data
+        assert "redis" in data["checks"]
+        assert "circuit_breakers" in data["checks"]
+        assert data["checks"]["redis"]["status"] in ("healthy", "unhealthy")
 
 
 class TestChatCompletionNonStreaming:
     """Test suite for non-streaming chat completion endpoint."""
-    
+
     def test_chat_completion_basic(self):
         """Basic chat completion should work."""
         payload = {
             "model": "gpt-4",
-            "messages": [
-                {"role": "user", "content": "Hello, world"}
-            ],
-            "stream": False
+            "messages": [{"role": "user", "content": "Hello, world"}],
+            "stream": False,
         }
         response = client.post("/v1/chat/completions", json=payload)
         assert response.status_code == 200
         data = response.json()
-        
+
         assert data["object"] == "chat.completion"
         assert data["model"] == "gpt-4"
         assert "id" in data
@@ -55,22 +58,20 @@ class TestChatCompletionNonStreaming:
         assert data["choices"][0]["finish_reason"] == "stop"
         assert "usage" in data
         assert data["usage"]["total_tokens"] > 0
-    
+
     def test_chat_completion_with_temperature(self):
         """Chat completion should accept temperature parameter."""
         payload = {
             "model": "gpt-3.5-turbo",
-            "messages": [
-                {"role": "user", "content": "Test message"}
-            ],
+            "messages": [{"role": "user", "content": "Test message"}],
             "temperature": 0.7,
-            "stream": False
+            "stream": False,
         }
         response = client.post("/v1/chat/completions", json=payload)
         assert response.status_code == 200
         data = response.json()
         assert data["model"] == "gpt-3.5-turbo"
-    
+
     def test_chat_completion_multiple_messages(self):
         """Chat completion should handle multiple messages."""
         payload = {
@@ -79,9 +80,9 @@ class TestChatCompletionNonStreaming:
                 {"role": "system", "content": "You are a helpful assistant"},
                 {"role": "user", "content": "Hello"},
                 {"role": "assistant", "content": "Hi there"},
-                {"role": "user", "content": "How are you?"}
+                {"role": "user", "content": "How are you?"},
             ],
-            "stream": False
+            "stream": False,
         }
         response = client.post("/v1/chat/completions", json=payload)
         assert response.status_code == 200
@@ -89,15 +90,13 @@ class TestChatCompletionNonStreaming:
         # Should respond to the last user message
         assert "You said:" in data["choices"][0]["message"]["content"]
         assert "How are you?" in data["choices"][0]["message"]["content"]
-    
+
     def test_chat_completion_invalid_model(self):
         """Chat completion should accept any model string."""
         payload = {
             "model": "invalid-model-name",
-            "messages": [
-                {"role": "user", "content": "Test"}
-            ],
-            "stream": False
+            "messages": [{"role": "user", "content": "Test"}],
+            "stream": False,
         }
         response = client.post("/v1/chat/completions", json=payload)
         assert response.status_code == 200
@@ -107,55 +106,49 @@ class TestChatCompletionNonStreaming:
 
 class TestChatCompletionStreaming:
     """Test suite for streaming chat completion endpoint."""
-    
+
     def test_streaming_response_format(self):
         """Streaming response should be in SSE format."""
         payload = {
             "model": "gpt-4",
-            "messages": [
-                {"role": "user", "content": "Say hello"}
-            ],
-            "stream": True
+            "messages": [{"role": "user", "content": "Say hello"}],
+            "stream": True,
         }
         response = client.post("/v1/chat/completions", json=payload)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
-    
+
     def test_streaming_content(self):
         """Streaming response should contain chunks."""
         payload = {
             "model": "gpt-4",
-            "messages": [
-                {"role": "user", "content": "Test"}
-            ],
-            "stream": True
+            "messages": [{"role": "user", "content": "Test"}],
+            "stream": True,
         }
         response = client.post("/v1/chat/completions", json=payload)
         assert response.status_code == 200
-        
+
         # Read streaming content
         content = b""
         for chunk in response.iter_bytes():
             content += chunk
-        
-        content_str = content.decode('utf-8')
+
+        content_str = content.decode("utf-8")
         # Should have data: prefix
         assert "data: " in content_str
         # Should have [DONE] at the end
         assert "data: [DONE]" in content_str
-    
+
     def test_streaming_chunks_format(self):
         """Streaming chunks should be valid JSON."""
         payload = {
             "model": "gpt-4",
-            "messages": [
-                {"role": "user", "content": "Test"}
-            ],
-            "stream": True
+            "messages": [{"role": "user", "content": "Test"}],
+            "stream": True,
         }
         response = client.post("/v1/chat/completions", json=payload)
         assert response.status_code == 200
-        
+
         chunks_received = []
         for line in response.iter_lines():
             if line.startswith("data: "):
@@ -168,7 +161,7 @@ class TestChatCompletionStreaming:
                         chunks_received.append(chunk_data)
                 except json.JSONDecodeError:
                     pass
-        
+
         # Should receive at least one chunk
         assert len(chunks_received) > 0
         # Each chunk should have choices with delta
@@ -181,42 +174,37 @@ class TestChatCompletionStreaming:
 
 class TestValidation:
     """Test suite for request validation."""
-    
+
     def test_missing_required_fields(self):
         """Request should fail if required fields are missing."""
         # Missing messages
         payload = {"model": "gpt-4"}
         response = client.post("/v1/chat/completions", json=payload)
         assert response.status_code == 422
-    
+
     def test_invalid_message_format(self):
         """Request should validate message format."""
-        payload = {
-            "model": "gpt-4",
-            "messages": [
-                {"role": "invalid_role", "content": "Test"}
-            ]
-        }
+        payload = {"model": "gpt-4", "messages": [{"role": "invalid_role", "content": "Test"}]}
         response = client.post("/v1/chat/completions", json=payload)
         # Should fail validation
         assert response.status_code == 422
-    
+
     def test_temperature_validation(self):
         """Temperature should be validated within range."""
         # Temperature too high
         payload = {
             "model": "gpt-4",
             "messages": [{"role": "user", "content": "Test"}],
-            "temperature": 3.0
+            "temperature": 3.0,
         }
         response = client.post("/v1/chat/completions", json=payload)
         assert response.status_code == 422
-        
+
         # Temperature too low (negative)
         payload = {
             "model": "gpt-4",
             "messages": [{"role": "user", "content": "Test"}],
-            "temperature": -1.0
+            "temperature": -1.0,
         }
         response = client.post("/v1/chat/completions", json=payload)
         assert response.status_code == 422
