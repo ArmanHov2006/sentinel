@@ -18,10 +18,10 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 
-
 # ── 1. Enum ──────────────────────────────────────────────────────────────────
 # First because ScanResult and Detector both reference it.
 # (str, Enum) so values work naturally in JSON, logging, string comparisons.
+
 
 class InjectionAction(str, Enum):
     """Possible outcomes of an injection scan."""
@@ -34,6 +34,7 @@ class InjectionAction(str, Enum):
 # ── 2. Rule ──────────────────────────────────────────────────────────────────
 # Second because DEFAULT_RULES and Detector reference it.
 # Dataclass is correct here — Rule IS a data container.
+
 
 @dataclass
 class Rule:
@@ -140,6 +141,7 @@ DEFAULT_RULES: list[Rule] = [
 # Dataclass because it IS data — just holds results.
 # safe() classmethod avoids duplicating the "clean result" construction.
 
+
 @dataclass
 class ScanResult:
     """Result of scanning messages for prompt injection."""
@@ -166,6 +168,7 @@ class ScanResult:
 #   - It has private state (_thresholds, _logger) that shouldn't be exposed
 #   - It's created once at startup and reused for every request
 #   - Matches the pattern of every other service in the pipeline
+
 
 class PromptInjectionDetector:
     """Scans messages for prompt injection attacks.
@@ -241,9 +244,7 @@ class PromptInjectionDetector:
 
         except Exception as exc:
             # Fail open — don't crash the pipeline because of a scanning bug
-            self._logger.warning(
-                "Injection scan failed: %s — allowing request through", exc
-            )
+            self._logger.warning("Injection scan failed: %s — allowing request through", exc)
             return ScanResult.safe()
 
     def _scan_text(self, text: str) -> list[Rule]:

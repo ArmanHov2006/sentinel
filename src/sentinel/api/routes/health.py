@@ -51,18 +51,20 @@ async def health_check(request: Request) -> HealthResponse:
 
     # --- Circuit breaker checks ---
     circuit_breakers: dict[str, CircuitBreakerCheck] = {}
-    provider = getattr(request.app.state, "provider", None)
+    registry = getattr(request.app.state, "registry", None)
 
-    if provider is not None and hasattr(provider, "circuit_breaker"):
-        cb = provider.circuit_breaker
-        last_failure = None
-        if cb.last_failure_time > 0:
-            last_failure = datetime.fromtimestamp(cb.last_failure_time, tz=UTC)
-        circuit_breakers["openai"] = CircuitBreakerCheck(
-            state=cb.state.value.upper(),
-            failure_count=cb.failure_count,
-            last_failure=last_failure,
-        )
+    if registry is not None:
+        for provider in registry.list_providers():
+            if hasattr(provider, "circuit_breaker"):
+                cb = provider.circuit_breaker
+                last_failure = None
+                if cb.last_failure_time > 0:
+                    last_failure = datetime.fromtimestamp(cb.last_failure_time, tz=UTC)
+                circuit_breakers[provider.name] = CircuitBreakerCheck(
+                    state=cb.state.value.upper(),
+                    failure_count=cb.failure_count,
+                    last_failure=last_failure,
+                )
 
     # --- Determine overall status ---
     redis_down = not redis_healthy

@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     sentinel_env: str = "development"
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"
+    anthropic_api_key: str | None = None
+    anthropic_base_url: str = "https://api.anthropic.com/v1"
     groq_api_key: str | None = None
     groq_base_url: str = "https://api.groq.com/openai/v1"
     request_timeout_seconds: float = 60.0

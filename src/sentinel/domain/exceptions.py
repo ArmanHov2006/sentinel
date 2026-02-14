@@ -49,3 +49,24 @@ class CircuitOpenError(SentinelError):
     """Circuit breaker is open."""
 
     pass
+
+
+class RoutingError(SentinelError):
+    """Error routing the request to the appropriate provider."""
+
+    pass
+
+
+class NoProviderError(RoutingError):
+    """No provider found for the request model."""
+
+    pass
+
+
+class AllProvidersFailedError(RoutingError):
+    """Every provider in the fallback chain failed."""
+
+    def __init__(self, errors: list[tuple[str, Exception]]) -> None:
+        self.errors = errors
+        names = [name for name, _ in errors]
+        super().__init__(f"All providers failed: {names}")

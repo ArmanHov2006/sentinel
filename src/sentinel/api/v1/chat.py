@@ -20,6 +20,7 @@ from sentinel.api.schemas.chat import (
     UsageSchema,
 )
 from sentinel.core.metrics import metrics
+from sentinel.domain.exceptions import AllProvidersFailedError, NoProviderError
 from sentinel.shield.pii_shield import PIIAction
 from sentinel.shield.prompt_injection_detector import InjectionAction
 
@@ -61,7 +62,9 @@ async def fake_stream_response():
         400: {
             "description": "Request blocked (PII or prompt injection detected)",
             "content": {
-                "application/json": {"example": {"detail": "Request blocked: prompt injection detected"}}
+                "application/json": {
+                    "example": {"detail": "Request blocked: prompt injection detected"}
+                }
             },
         },
         429: {
@@ -170,13 +173,23 @@ async def create_chat_completion(
             # Assume cached_response is the serialized dict form of ChatCompletionResponse
             return ChatCompletionResponse.model_validate(cached_response)
 
-    # Try provider; fall back to mock if missing or on error
-    provider = getattr(request.app.state, "provider", None)
+    # Route via router (with failover) or fall back to mock
+    router = getattr(request.app.state, "router", None)
     domain_response = None
-    if provider is not None:
+    if router is not None:
         try:
             domain_request = to_domain_chat_request(chat_request)
-            domain_response = await provider.complete(domain_request)
+            domain_response = await router.route(domain_request)
+        except NoProviderError as e:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No provider configured for model: {chat_request.model}",
+            ) from e
+        except AllProvidersFailedError as e:
+            raise HTTPException(
+                status_code=503,
+                detail=f"All providers failed: {[n for n, _ in e.errors]}",
+            ) from e
         except Exception:
             domain_response = None
     if domain_response is not None:

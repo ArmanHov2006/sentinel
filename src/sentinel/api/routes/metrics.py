@@ -24,9 +24,11 @@ router = APIRouter(tags=["Operations"])
 async def reset_stats(request: Request) -> dict[str, str]:
     """Reset metrics, circuit breaker, Redis cache, and uptime for a clean test run."""
     metrics.reset()
-    provider = getattr(request.app.state, "provider", None)
-    if provider is not None and hasattr(provider, "circuit_breaker"):
-        provider.circuit_breaker.reset()
+    registry = getattr(request.app.state, "registry", None)
+    if registry is not None:
+        for provider in registry.list_providers():
+            if hasattr(provider, "circuit_breaker"):
+                provider.circuit_breaker.reset()
     # Flush Redis cache so cached responses don't carry over
     redis_client = getattr(request.app.state, "redis", None)
     if redis_client is not None:

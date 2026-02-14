@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from sentinel.api.routes.health import router as health_router
 from sentinel.api.routes.metrics import router as metrics_router
 from sentinel.api.v1.chat import router as chat_router
+from sentinel.core.circuit_breaker import CircuitBreaker
 from sentinel.core.config import get_settings
 from sentinel.core.logging_config import configure_logging
 from sentinel.core.rate_limiter import RateLimiter
@@ -25,6 +26,8 @@ from sentinel.core.redis import create_redis_client
 from sentinel.core.retry import RetryPolicy
 from sentinel.middleware.trace import TraceMiddleware
 from sentinel.providers.openai import OpenAIProvider
+from sentinel.providers.registry import ProviderRegistry
+from sentinel.providers.router import Router
 from sentinel.services.cache import CacheService
 from sentinel.shield.pii_shield import PIIShield
 from sentinel.shield.prompt_injection_detector import PromptInjectionDetector
@@ -71,13 +74,26 @@ async def lifespan(app: FastAPI):
         logger.warning("Failed to initialize retry policy: %s", e)
         app.state.retry_policy = None
 
-    # --- Provider selection ---
+    # --- Provider Registry + Router ---
+    app.state.registry = ProviderRegistry()
+    fallbacks: dict[str, list[str]] = {"*": ["openai"]}  # default chain
+
+    if settings.openai_api_key:
+        cb = CircuitBreaker()
+        retry = app.state.retry_policy or RetryPolicy()
+        openai_provider = OpenAIProvider(circuit_breaker=cb, retry_policy=retry)
+        app.state.registry.register(openai_provider)
+
     if settings.groq_api_key:
-        api_key, base_url = settings.groq_api_key, settings.groq_base_url
-    elif settings.openai_api_key:
-        api_key, base_url = settings.openai_api_key, settings.openai_base_url
+        # TODO: add GroqProvider when implemented
+        pass
+
+    # Only set router when at least one provider is registered; otherwise chat uses mock fallback.
+    if len(app.state.registry) > 0:
+        app.state.router = Router(registry=app.state.registry, fallbacks=fallbacks)
     else:
-        api_key, base_url = None, None
+        app.state.router = None
+        logger.info("No LLM providers configured; chat completions will use mock fallback")
 
     # --- Redis + Cache + Rate Limiter ---
     app.state.redis = create_redis_client()
@@ -97,9 +113,6 @@ async def lifespan(app: FastAPI):
         )
         app.state.cache = None
         app.state.rate_limiter = None
-
-    # --- LLM Provider ---
-    app.state.provider = OpenAIProvider(api_key=api_key, base_url=base_url) if api_key else None
 
     logger.info("Sentinel started (version 0.1.0)")
     yield

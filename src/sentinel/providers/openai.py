@@ -1,8 +1,10 @@
-import datetime
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 import httpx
 
 from sentinel.core.circuit_breaker import CircuitBreaker
+from sentinel.core.config import get_settings
 from sentinel.core.retry import RetryPolicy
 from sentinel.domain.exceptions import (
     CircuitOpenError,
@@ -22,17 +24,32 @@ from sentinel.providers.base import LLMProvider
 
 
 class OpenAIProvider(LLMProvider):
-    def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1"):
-        self.api_key = api_key
-        self.base_url = base_url
-        self.circuit_breaker = CircuitBreaker()
-        self.retry_policy = RetryPolicy(max_attempts=3, base_delay=1.0, max_delay=40.0)
+    """OpenAI provider."""
+
+    def __init__(self, circuit_breaker: CircuitBreaker, retry_policy: RetryPolicy):
+        super().__init__(circuit_breaker, retry_policy)
+        settings = get_settings()
+        if not settings.openai_api_key:
+            raise ValueError("OPENAI_API_KEY is not set")
+        self._api_key = settings.openai_api_key
+        self._base_url = settings.openai_base_url.rstrip("/")
+
+    @property
+    def name(self) -> str:
+        return "openai"
+
+    @property
+    def models(self) -> list[str]:
+        return ["gpt-4", "gpt-4o", "gpt-4o-mini"]
+
+    async def stream(self, request: ChatRequest) -> AsyncIterator[str]:
+        raise NotImplementedError("Stream method not implemented")
 
     async def health_check(self) -> bool:
         try:
-            async with httpx.AsyncClient(base_url=self.base_url) as client:
+            async with httpx.AsyncClient(base_url=self._base_url) as client:
                 response = await client.get(
-                    "/v1/models", headers={"Authorization": f"Bearer {self.api_key}"}
+                    "/models", headers={"Authorization": f"Bearer {self._api_key}"}
                 )
                 if response.status_code == 503:
                     raise ProviderUnavailableError("OpenAI service unavailable", "openai", 503)
@@ -43,8 +60,8 @@ class OpenAIProvider(LLMProvider):
             raise ProviderError(f"Health check failed: {e}", "openai", None) from e
 
     async def _do_completion(self, request: ChatRequest) -> ChatResponse:
-        async with httpx.AsyncClient(base_url=self.base_url) as client:
-            headers = {"Authorization": f"Bearer {self.api_key}"}
+        async with httpx.AsyncClient(base_url=self._base_url) as client:
+            headers = {"Authorization": f"Bearer {self._api_key}"}
             payload = {
                 "model": request.model,
                 "messages": [
@@ -91,23 +108,22 @@ class OpenAIProvider(LLMProvider):
                     completion_tokens=data["usage"]["completion_tokens"],
                 ),
                 latency_ms=0.0,
-                created_at=datetime.datetime.now(),
+                created_at=datetime.now(UTC),
             )
 
     async def complete(self, request: ChatRequest) -> ChatResponse:
-        if not self.circuit_breaker.can_execute():
+        if not self._circuit_breaker.can_execute():
             raise CircuitOpenError(
                 message="Circuit breaker is open - provider unavailable",
                 details={"provider": "openai"},
             )
 
-        async def attempt():
-            return await self._do_completion(request)
-
         try:
-            result = await self.retry_policy.execute_with_retry(attempt)
-            self.circuit_breaker.record_success()
+            result = await self._retry_policy.execute_with_retry(
+                lambda: self._do_completion(request)
+            )
+            self._circuit_breaker.record_success()
             return result
         except Exception:
-            self.circuit_breaker.record_failure()
+            self._circuit_breaker.record_failure()
             raise
