@@ -31,6 +31,7 @@ from sentinel.providers.router import Router
 from sentinel.services.cache import CacheService
 from sentinel.shield.pii_shield import PIIShield
 from sentinel.shield.prompt_injection_detector import PromptInjectionDetector
+from sentinel.providers.anthropic import AnthropicProvider
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -76,13 +77,19 @@ async def lifespan(app: FastAPI):
 
     # --- Provider Registry + Router ---
     app.state.registry = ProviderRegistry()
-    fallbacks: dict[str, list[str]] = {"*": ["openai"]}  # default chain
+    fallbacks: dict[str, list[str]] = {"*": ["openai", "anthropic"]}  # default chain
 
     if settings.openai_api_key:
         cb = CircuitBreaker()
         retry = app.state.retry_policy or RetryPolicy()
         openai_provider = OpenAIProvider(circuit_breaker=cb, retry_policy=retry)
         app.state.registry.register(openai_provider)
+
+    if settings.anthropic_api_key:
+        cb = CircuitBreaker()
+        retry = app.state.retry_policy or RetryPolicy()
+        anthropic_provider = AnthropicProvider(circuit_breaker=cb, retry_policy=retry)
+        app.state.registry.register(anthropic_provider)
 
     if settings.groq_api_key:
         # TODO: add GroqProvider when implemented
