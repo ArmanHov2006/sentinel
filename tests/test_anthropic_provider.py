@@ -8,10 +8,10 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from sentinel.providers.anthropic import AnthropicProvider
 from sentinel.core.circuit_breaker import CircuitBreaker
 from sentinel.core.retry import RetryPolicy
-from sentinel.domain.models import Message, Role, FinishReason
+from sentinel.domain.models import FinishReason, Message, Role
+from sentinel.providers.anthropic import AnthropicProvider
 
 
 def _make_mock_settings(api_key: str = "test-key", base_url: str = "https://api.anthropic.com/v1"):
@@ -26,12 +26,22 @@ class TestAnthropicProvider:
 
     def test_init_requires_api_key(self):
         """Should raise ValueError if ANTHROPIC_API_KEY is not set."""
-        with patch("sentinel.providers.anthropic.get_settings", return_value=_make_mock_settings(api_key=None)):
-            with pytest.raises(ValueError, match="ANTHROPIC_API_KEY is not set"):
-                AnthropicProvider(CircuitBreaker(), RetryPolicy())
-        with patch("sentinel.providers.anthropic.get_settings", return_value=_make_mock_settings(api_key="")):
-            with pytest.raises(ValueError, match="ANTHROPIC_API_KEY is not set"):
-                AnthropicProvider(CircuitBreaker(), RetryPolicy())
+        with (
+            patch(
+                "sentinel.providers.anthropic.get_settings",
+                return_value=_make_mock_settings(api_key=None),
+            ),
+            pytest.raises(ValueError, match="ANTHROPIC_API_KEY is not set"),
+        ):
+            AnthropicProvider(CircuitBreaker(), RetryPolicy())
+        with (
+            patch(
+                "sentinel.providers.anthropic.get_settings",
+                return_value=_make_mock_settings(api_key=""),
+            ),
+            pytest.raises(ValueError, match="ANTHROPIC_API_KEY is not set"),
+        ):
+            AnthropicProvider(CircuitBreaker(), RetryPolicy())
 
     def test_provider_name(self):
         """Provider name should be 'anthropic'."""

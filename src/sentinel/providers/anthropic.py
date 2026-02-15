@@ -126,11 +126,8 @@ class AnthropicProvider(LLMProvider):
                 system_prompts.append(msg.content)
             else:
                 conversation_messages.append({"role": msg.role.value, "content": msg.content})
-        if not system_prompts:
-            system_prompts = None
-        else:
-            system_prompts = "\n".join(system_prompts)
-        return system_prompts, conversation_messages
+        system_prompt = None if not system_prompts else "\n".join(system_prompts)
+        return system_prompt, conversation_messages
 
     async def _do_completion(self, request: ChatRequest) -> ChatResponse:
         async with httpx.AsyncClient(base_url=self._base_url) as client:

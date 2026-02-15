@@ -1,0 +1,51 @@
+CI Failure — All annotations as text
+=====================================
+
+Workflow: Sentinel CI (ci.yml on: push)
+Run: feat: Anthropic provider with health check, complete, and live test #3
+Commit: b63b1b6 on main
+Status: Failure
+Total duration: 1m 22s
+
+Jobs:
+- Lint: FAILED (6s)
+- Test: PASSED (1m 17s)
+- Docker Build: FAILED (0s, likely skipped due to Lint failure)
+
+Annotations (8 errors)
+----------------------
+
+1. Lint
+   Process completed with exit code 1.
+
+2. ruff (SIM117): tests/test_anthropic_provider.py#L32
+   Use a single `with` statement with multiple contexts instead of nested `with` statements
+
+3. ruff (SIM117): tests/test_anthropic_provider.py#L29
+   Use a single `with` statement with multiple contexts instead of nested `with` statements
+
+4. ruff (I001): tests/test_anthropic_provider.py#L11
+   Import block is un-sorted or un-formatted
+
+5. ruff (SIM108): src/sentinel/providers/anthropic.py#L129
+   Use ternary operator `system_prompts = None if not system_prompts else "\n".join(system_prompts)` instead of `if`-`else`-block
+
+6. ruff (I001): src/sentinel/main.py#L8
+   Import block is un-sorted or un-formatted
+
+7. ruff (W293): scripts/test_anthropic_live.py#L17
+   Blank line contains whitespace
+
+8. ruff (I001): scripts/test_anthropic_live.py#L9
+   Import block is un-sorted or un-formatted
+
+Fixes applied
+-------------
+- scripts/test_anthropic_live.py: Sorted imports (core, domain, providers), removed trailing whitespace, ruff format.
+- src/sentinel/main.py: AnthropicProvider import sorted with other sentinel.providers (alphabetical).
+- src/sentinel/providers/anthropic.py: Ternary for system_prompt (SIM108).
+- tests/test_anthropic_provider.py: Sorted imports, single with for patch+pytest.raises (SIM117), ruff format.
+
+CI runs both: ruff check . --output-format=github and ruff format --check . (format was failing on 2 files; now fixed.)
+
+Run locally to verify: ruff check . --output-format=github && ruff format --check .

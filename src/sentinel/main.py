@@ -25,13 +25,13 @@ from sentinel.core.rate_limiter import RateLimiter
 from sentinel.core.redis import create_redis_client
 from sentinel.core.retry import RetryPolicy
 from sentinel.middleware.trace import TraceMiddleware
+from sentinel.providers.anthropic import AnthropicProvider
 from sentinel.providers.openai import OpenAIProvider
 from sentinel.providers.registry import ProviderRegistry
 from sentinel.providers.router import Router
 from sentinel.services.cache import CacheService
 from sentinel.shield.pii_shield import PIIShield
 from sentinel.shield.prompt_injection_detector import PromptInjectionDetector
-from sentinel.providers.anthropic import AnthropicProvider
 
 STATIC_DIR = Path(__file__).parent / "static"
 
