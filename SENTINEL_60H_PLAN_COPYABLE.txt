@@ -1,0 +1,318 @@
+================================================================================
+SENTINEL: 60-HOUR RESUME-READY SPRINT (copy everything below this line)
+================================================================================
+
+CURRENT STATE (WHAT YOU ALREADY HAVE)
+
+Your project is already at ~85% maturity for a portfolio project. You have:
+
+- Multi-provider support (OpenAI, Anthropic) with failover routing
+- PII detection/redaction via Presidio, prompt injection detection
+- Circuit breakers, retry with backoff, Redis rate limiting
+- Redis response caching (exact match)
+- Request tracing with correlation IDs
+- In-memory metrics with percentiles, a Chart.js dashboard
+- Docker Compose (app + Redis), CI/CD via GitHub Actions, solid README
+
+
+WHAT IS MISSING (THE GAPS THAT HURT YOU)
+
+1. Streaming is a fake stub — the single biggest gap. Every real LLM gateway streams. Without it, the project looks like a toy in an interview.
+
+2. No cost tracking — you track tokens but not dollars. Business-aware engineering is a differentiator.
+
+3. Metrics are in-memory only — no Prometheus export means no Grafana, which means no professional dashboards.
+
+4. No audit trail — enterprise gateways log every request/response for compliance.
+
+5. No load testing — claiming "production-grade" without performance numbers is unconvincing.
+
+6. Streaming tests and integration tests are thin — test coverage needs work.
+
+
+WHY SOME FEATURES WERE DROPPED FROM YOUR ORIGINAL PLAN
+
+- Semantic caching: Requires an embedding model + vector store. High complexity, hard to demo, easy to get wrong. Your exact-match Redis cache is already solid.
+
+- LLM-as-judge: Doubles cost per request, needs careful prompt engineering, results are subjective. Not worth the risk in a time-boxed sprint.
+
+- OpenTelemetry: Replacing your working custom tracing with OTel is a lateral move, not an upgrade. Prometheus export gives you Grafana without rewriting your tracing layer.
+
+
+================================================================================
+THE PLAN (60 HOURS, 10 BLOCKS OF 6 HOURS)
+================================================================================
+
+PHASE 1: COMPLETE THE CORE (18 hours)
+
+---
+Block 1-2: Real Streaming (12h)
+---
+
+This is the highest-priority work. Your API already accepts stream: true but returns fake data.
+
+What to build:
+
+- AnthropicProvider.stream() — POST to /messages with "stream": true, parse SSE event: content_block_delta events, yield text deltas.
+
+- OpenAIProvider.stream() — POST to /chat/completions with "stream": true, parse SSE data: {...} lines, yield content deltas.
+
+- Update POST /v1/chat/completions in src/sentinel/api/v1/chat.py to call real provider streaming instead of fake_stream_response().
+
+- Use StreamingResponse with text/event-stream content type, format as OpenAI-compatible SSE (data: {"choices": [{"delta": {"content": "..."}}]}).
+
+- Wire through the security pipeline: PII scan the accumulated response after streaming completes (or scan chunks if you want real-time filtering).
+
+Key files to modify:
+
+- src/sentinel/providers/anthropic.py — implement stream()
+- src/sentinel/providers/openai.py — implement stream()
+- src/sentinel/api/v1/chat.py — replace fake_stream_response() with real provider call
+- src/sentinel/providers/base.py — the abstract stream() signature is already there
+
+Why this matters for interviews: "Does your gateway support streaming?" is THE first question anyone will ask about an LLM proxy.
+
+---
+Block 3: Token Cost Tracking (6h)
+---
+
+What to build:
+
+- A TokenCostCalculator class in a new file src/sentinel/services/cost.py with:
+  - Static pricing dict per model (e.g. "gpt-4o": {"input": 2.50, "output": 10.00} per 1M tokens)
+  - Method: calculate_cost(model, prompt_tokens, completion_tokens) -> CostBreakdown
+  - A CostBreakdown dataclass: input_cost, output_cost, total_cost
+
+- Add cost fields to ChatResponse in src/sentinel/domain/models.py: cost_usd: float | None
+
+- Calculate cost after every completion in both providers, attach to response.
+
+- Add cost counters to MetricsCollector in src/sentinel/core/metrics.py: total_cost_usd, cost_by_provider, cost_by_model.
+
+- Expose in /metrics response and on the dashboard.
+
+- Add a /v1/usage endpoint that returns aggregated cost stats.
+
+Why this matters: Shows you think about the business side, not just the tech. Cost tracking is a real-world requirement every team building on LLMs cares about.
+
+
+PHASE 2: PROFESSIONAL OBSERVABILITY (12 hours)
+
+---
+Block 4: Prometheus Metrics Export (6h)
+---
+
+What to build:
+
+- Add prometheus_client to requirements.
+
+- Create src/sentinel/core/prometheus.py that mirrors your existing MetricsCollector counters as Prometheus types:
+  - Counter: sentinel_requests_total, sentinel_cache_hits_total, sentinel_pii_detections_total, etc.
+  - Histogram: sentinel_request_duration_seconds (with buckets)
+  - Gauge: sentinel_active_requests, sentinel_circuit_breaker_state
+  - Counter with labels: sentinel_requests_by_provider{provider="openai"}, sentinel_cost_usd_total{provider="anthropic"}
+
+- Add a GET /metrics/prometheus endpoint that returns text/plain Prometheus format (using generate_latest()).
+
+- Keep your existing /metrics JSON endpoint and dashboard working (they serve different purposes).
+
+Why this matters: Prometheus is the industry standard. Having both your custom dashboard AND Prometheus export shows you understand the ecosystem.
+
+---
+Block 5: Grafana Dashboard + Docker Stack (6h)
+---
+
+What to build:
+
+- Add to docker-compose.yml:
+  - prometheus service (scraping sentinel:8000/metrics/prometheus every 15s)
+  - grafana service (port 3000, provisioned data source pointing to prometheus)
+
+- Create monitoring/prometheus.yml (scrape config).
+
+- Create monitoring/grafana/dashboards/sentinel.json — a pre-built Grafana dashboard with:
+  - Request rate panel (requests/sec over time)
+  - Latency percentiles panel (p50, p95, p99 histograms)
+  - Error rate panel
+  - Cost tracking panel (USD/hour, by provider)
+  - Cache hit rate panel
+  - Circuit breaker status panel
+  - PII detection events panel
+
+- Create monitoring/grafana/provisioning/ with datasource and dashboard provisioning YAML.
+
+- Result: docker compose up gives you app + redis + prometheus + grafana with a pre-built dashboard at localhost:3000.
+
+Why this matters: Screenshots of a Grafana dashboard in your README are worth 1000 words. This is the single most visually impressive thing you can add.
+
+
+PHASE 3: ENTERPRISE FEATURE — AUDIT LOG (6 hours)
+
+---
+Block 6: Request/Response Audit Trail (6h)
+---
+
+What to build:
+
+- New file src/sentinel/services/audit.py:
+  - AuditService class that logs every request/response to Redis (list or stream)
+  - Each audit entry: request_id, timestamp, provider, model, prompt_tokens, completion_tokens, cost_usd, latency_ms, finish_reason, pii_detected, injection_score, status
+  - DO NOT store full message content by default (privacy). Store a flag pii_redacted: bool
+  - TTL: 24h default (configurable)
+
+- New endpoint GET /v1/audit — returns recent audit entries (paginated).
+
+- New endpoint GET /v1/audit/{request_id} — returns a single entry by trace ID.
+
+- Wire into the chat completion flow in src/sentinel/api/v1/chat.py.
+
+- Add audit entry count to /metrics.
+
+Why this matters: Compliance and auditability are enterprise requirements. This shows you think beyond "make it work" to "make it operationally viable."
+
+
+PHASE 4: TESTING AND HARDENING (12 hours)
+
+---
+Block 7: Integration Tests (6h)
+---
+
+What to build:
+
+- New file tests/test_integration.py — end-to-end tests using httpx.AsyncClient with the FastAPI TestClient:
+  - Test full request flow: API -> rate limiter -> PII shield -> injection check -> cache -> provider -> response
+  - Test streaming endpoint returns valid SSE format
+  - Test cache hit/miss behavior end-to-end
+  - Test rate limiting actually blocks after threshold
+  - Test circuit breaker opens after provider failures
+  - Test PII redaction in responses
+  - Test audit log entries are created
+  - Test cost tracking accumulates correctly
+
+- Use unittest.mock to mock the actual HTTP calls to LLM providers (so tests don't need API keys).
+
+- Target: at least 20 new test cases covering the full pipeline.
+
+Why this matters: Going from ~30 tests to 50+ with integration coverage shows engineering discipline.
+
+---
+Block 8: Production Hardening (6h)
+---
+
+What to build:
+
+- Timeouts: Enforce request_timeout_seconds on all httpx calls in both providers (currently not enforced — httpx.AsyncClient has a timeout param).
+
+- Input validation: Max message count, max content length per message, reject empty messages.
+
+- Graceful shutdown: Add cleanup in the lifespan yield block — drain active requests, flush audit log.
+
+- Error responses: Standardize error response format across all endpoints (consistent JSON structure with error.type, error.message, error.code).
+
+- Health check depth: Add provider health to /health (try a lightweight call to each registered provider).
+
+- Config validation: Validate settings at startup (e.g. rate_limit_window_seconds > 0, URLs are valid).
+
+- CORS tightening: Make allowed origins configurable (currently *).
+
+
+PHASE 5: LOAD TESTING AND DEMO (12 hours)
+
+---
+Block 9: Load Testing with Locust (6h)
+---
+
+What to build:
+
+- Add locust to dev dependencies.
+
+- Create loadtests/locustfile.py with scenarios:
+  - Health check endpoint (baseline throughput)
+  - Chat completion (mocked provider — use a simple FastAPI mock server)
+  - Chat completion with cache hits vs misses
+  - Streaming requests
+  - Rate limit saturation test
+
+- Create loadtests/mock_provider.py — a tiny FastAPI app that returns canned LLM responses (so you can load test without real API keys or costs).
+
+- Run tests, capture results:
+  - Requests/sec at various concurrency levels
+  - p50, p95, p99 latency
+  - Error rates under load
+  - Memory usage over time
+
+- Add results to README with a "Performance" section and charts.
+
+Why this matters: "Under load testing with 100 concurrent users, Sentinel handles 500 req/s with p99 latency under 50ms" is a killer line in an interview.
+
+---
+Block 10: Documentation, Demo, and Polish (6h)
+---
+
+What to build:
+
+- Update README.md:
+  - Add Anthropic to the provider list and architecture diagram
+  - Add "Cost Tracking" section with example output
+  - Add "Audit Log" section
+  - Add "Monitoring" section with Grafana dashboard screenshot
+  - Add "Performance" section with load test results
+  - Add "Architecture Decisions" section (why circuit breaker, why Redis, why Presidio, why not semantic cache)
+
+- Create scripts/demo.py — an end-to-end demo script that:
+  - Creates a chat completion (shows the full pipeline)
+  - Shows streaming
+  - Triggers PII detection
+  - Shows cost tracking
+  - Queries the audit log
+  - Prints everything nicely
+
+- Update docker-compose.yml to pass ANTHROPIC_API_KEY.
+
+- Final pass: fix any remaining lint issues, ensure all tests pass, clean up TODOs.
+
+
+================================================================================
+SUMMARY: WHAT YOU END UP WITH
+================================================================================
+
+Architecture (text):
+
+- Client (Application) sends HTTP/SSE to Sentinel API Layer (OpenAI-compatible, Streaming SSE).
+- API flows through: Rate Limiter -> PII Shield -> Injection Detector -> Redis Cache.
+- On cache miss: Circuit Breaker -> Retry + Backoff -> OpenAI or Anthropic provider.
+- Responses go through Cost Tracker and Audit Logger.
+- Metrics endpoint feeds Prometheus, which feeds Grafana Dashboard; built-in dashboard also uses metrics.
+
+Feature count after 60 hours:
+
+- 2 LLM providers with streaming
+- 5 security/resilience features (PII, injection, circuit breaker, retry, rate limit)
+- Response caching with cost-aware key generation
+- Token cost tracking with per-provider breakdown
+- Request/response audit log
+- Prometheus metrics + Grafana dashboards + built-in dashboard
+- Load test results with performance numbers
+- 50+ tests (unit + integration)
+- Full Docker Compose stack (app + Redis + Prometheus + Grafana)
+- CI/CD pipeline
+- Comprehensive README with architecture decisions, screenshots, and performance data
+
+
+================================================================================
+TODO CHECKLIST (9 blocks)
+================================================================================
+
+[ ] Block 1-2 (12h): Real SSE streaming for OpenAI and Anthropic, replace fake_stream_response in chat.py
+[ ] Block 3 (6h): Token cost calculator, cost on ChatResponse, /v1/usage, dashboard widget
+[ ] Block 4 (6h): Prometheus metrics export, /metrics/prometheus endpoint
+[ ] Block 5 (6h): Grafana + Prometheus in docker-compose, pre-built dashboard, provisioning
+[ ] Block 6 (6h): Audit service in Redis, /v1/audit endpoints
+[ ] Block 7 (6h): Integration tests, full pipeline with mocked providers
+[ ] Block 8 (6h): Timeouts, validation, graceful shutdown, error format, config validation, CORS
+[ ] Block 9 (6h): Locust load tests, mock provider, performance section in README
+[ ] Block 10 (6h): README update, demo script, architecture decisions, polish
+
+================================================================================
+END OF PLAN
+================================================================================

@@ -1,3 +1,4 @@
+import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
@@ -43,7 +44,34 @@ class OpenAIProvider(LLMProvider):
         return ["gpt-4", "gpt-4o", "gpt-4o-mini"]
 
     async def stream(self, request: ChatRequest) -> AsyncIterator[str]:
-        raise NotImplementedError("Stream method not implemented")
+        payload = {
+            "model": request.model,
+            "messages": [
+                {"role": msg.role.value, "content": msg.content} for msg in request.messages
+            ],
+            "temperature": request.parameters.temperature,
+            "stream": True,
+        }
+
+        async with httpx.AsyncClient(base_url=self._base_url) as client:
+            headers = {"Authorization": f"Bearer {self._api_key}"}
+            async with client.stream(
+                "POST", "/chat/completions", json=payload, headers=headers
+            ) as stream:
+                async for line in stream.aiter_lines():
+                    if not line:
+                        continue
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            break
+                        data = json.loads(data_str)
+                        choices = data.get("choices", [])
+                        if choices:
+                            delta = choices[0].get("delta", {})
+                            content = delta.get("content", "")
+                            if content:
+                                yield content
 
     async def health_check(self) -> bool:
         try:
