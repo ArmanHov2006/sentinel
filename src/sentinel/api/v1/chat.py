@@ -80,7 +80,6 @@ async def fake_stream_response():
 async def create_chat_completion(
     chat_request: ChatCompletionRequest, request: Request, response: Response
 ):
-    # 1. Rate limiting (FIRST — protect resources)
     client_ip = request.client.host if request.client else "unknown"
     rate_limiter = getattr(request.app.state, "rate_limiter", None)
 
@@ -93,12 +92,10 @@ async def create_chat_completion(
                 headers={"Retry-After": str(rate_limiter.window_seconds)},
             )
 
-        # Add rate limit headers
         remaining = await rate_limiter.get_remaining(client_ip)
         response.headers["X-RateLimit-Limit"] = str(rate_limiter.max_requests)
         response.headers["X-RateLimit-Remaining"] = str(remaining)
 
-    # 2. PII shield
     pii_shield = getattr(request.app.state, "pii_shield", None)
     if pii_shield is not None:
         messages_as_dicts = [{"role": m.role, "content": m.content} for m in chat_request.messages]
@@ -126,7 +123,6 @@ async def create_chat_completion(
                     pii_types = [f.type.value for f in result.findings]
                     logger.warning("PII detected in message %d: %s", idx, pii_types)
 
-    # 3. Injection detector (after PII, before cache)
     injection_detector = getattr(request.app.state, "injection_detector", None)
     if injection_detector is not None:
         messages_as_dicts = [{"role": m.role, "content": m.content} for m in chat_request.messages]
@@ -146,10 +142,45 @@ async def create_chat_completion(
                 injection_result.matched_rules,
             )
 
-    # 4. Streaming branch
     if chat_request.stream:
+        provider_router = getattr(request.app.state, "router", None)
+        if provider_router is None:
+            return StreamingResponse(
+                fake_stream_response(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    "Connection": "keep-alive",
+                },
+            )
+
+        async def stream_response():
+            try:
+                domain_request = to_domain_chat_request(chat_request)
+                async for chunk in provider_router.stream(domain_request):
+                    chunk_data = {"choices": [{"delta": {"content": chunk}}]}
+                    yield f"data: {json.dumps(chunk_data)}\n\n"
+                yield "data: [DONE]\n\n"
+            except NoProviderError:
+                error_data = {
+                    "error": {
+                        "message": f"No provider configured for model: {chat_request.model}",
+                        "type": "invalid_request_error",
+                    }
+                }
+                yield f"data: {json.dumps(error_data)}\n\n"
+            except AllProvidersFailedError as e:
+                error_data = {
+                    "error": {
+                        "message": f"All providers failed: {[n for n, _ in e.errors]}",
+                        "type": "server_error",
+                    }
+                }
+                yield f"data: {json.dumps(error_data)}\n\n"
+
         return StreamingResponse(
-            fake_stream_response(),
+            stream_response(),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -158,7 +189,6 @@ async def create_chat_completion(
             },
         )
 
-    # 5. Non-streaming branch with optional cache
     cache = getattr(request.app.state, "cache", None)
     cache_key: str | None = None
 
@@ -170,16 +200,14 @@ async def create_chat_completion(
         )
         cached_response = await cache.get(cache_key)
         if cached_response:
-            # Assume cached_response is the serialized dict form of ChatCompletionResponse
             return ChatCompletionResponse.model_validate(cached_response)
 
-    # Route via router (with failover) or fall back to mock
-    router = getattr(request.app.state, "router", None)
+    provider_router = getattr(request.app.state, "router", None)
     domain_response = None
-    if router is not None:
+    if provider_router is not None:
         try:
             domain_request = to_domain_chat_request(chat_request)
-            domain_response = await router.route(domain_request)
+            domain_response = await provider_router.route(domain_request)
         except NoProviderError as e:
             raise HTTPException(
                 status_code=404,
@@ -198,12 +226,9 @@ async def create_chat_completion(
             await cache.set(cache_key, api_response.model_dump())
         return api_response
 
-    # Fallback mock response
     last_message = chat_request.messages[-1]
     user_said = last_message.content
-
     mock_content = f"You said: {user_said}"
-
     unique_id = f"sentinel-{uuid.uuid4().hex[:12]}"
     timestamp = int(time.time())
 
@@ -229,7 +254,6 @@ async def create_chat_completion(
         ),
     )
 
-    # Store in cache for future identical requests
     if cache and cache_key:
         await cache.set(cache_key, api_response.model_dump())
 

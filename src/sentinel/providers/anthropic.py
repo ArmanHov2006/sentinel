@@ -1,6 +1,6 @@
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-
+import json
 import httpx
 
 from sentinel.core.circuit_breaker import CircuitBreaker
@@ -88,9 +88,6 @@ class AnthropicProvider(LLMProvider):
             raise
         except Exception as e:
             raise ProviderError(f"Health check failed: {e}", "anthropic", None) from e
-
-    async def stream(self, request: ChatRequest) -> AsyncIterator[str]:
-        raise NotImplementedError("Stream method not implemented")
 
     async def complete(self, request: ChatRequest) -> ChatResponse:
         if not self._circuit_breaker.can_execute():
@@ -189,3 +186,83 @@ class AnthropicProvider(LLMProvider):
                 latency_ms=0.0,
                 created_at=datetime.now(UTC),
             )
+    
+    async def stream(self, request: ChatRequest) -> AsyncIterator[str]:
+        """Stream a chat completion from Anthropic with circuit breaker protection."""
+        if not self._circuit_breaker.can_execute():
+            raise CircuitOpenError(
+                message="Circuit breaker is open - provider unavailable",
+                details={"provider": "anthropic"},
+            )
+
+        try:
+            async for chunk in self._do_stream(request):
+                yield chunk
+            self._circuit_breaker.record_success()
+        except Exception:
+            self._circuit_breaker.record_failure()
+            raise
+
+    async def _do_stream(self, request: ChatRequest) -> AsyncIterator[str]:
+        """Execute the streaming HTTP call to Anthropic."""
+        async with httpx.AsyncClient(base_url=self._base_url) as client:
+            headers = {
+                "x-api-key": self._api_key,
+                "anthropic-version": "2025-04-14",
+                "content-type": "application/json",
+            }
+
+            system_prompt, conversation_messages = self._prepare_messages(request.messages)
+            payload = {
+                "model": request.model,
+                "messages": conversation_messages,
+                "max_tokens": request.parameters.max_tokens or 1024,
+                "stream": True,
+            }
+            if request.parameters.temperature is not None:
+                payload["temperature"] = request.parameters.temperature
+            if request.parameters.top_p is not None:
+                payload["top_p"] = request.parameters.top_p
+            if request.parameters.stop:
+                payload["stop_sequences"] = request.parameters.stop
+            if system_prompt:
+                payload["system"] = system_prompt
+
+            async with client.stream("POST", "/messages", json=payload, headers=headers) as response:
+                if response.status_code == 429:
+                    raise ProviderRateLimitError(
+                        "Rate limit exceeded",
+                        "anthropic",
+                        429,
+                        {"retry_after": response.headers.get("retry-after", "unknown")},
+                    )
+                elif response.status_code == 503:
+                    raise ProviderUnavailableError(
+                        "Anthropic service unavailable", "anthropic", 503
+                    )
+                elif response.status_code != 200:
+                    await response.aread()
+                    raise ProviderError(
+                        f"Request failed with status {response.status_code}",
+                        "anthropic",
+                        response.status_code,
+                        {"response": response.text},
+                    )
+
+                current_event = None
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    if line.startswith("event: "):
+                        current_event = line[7:].strip()
+                    elif line.startswith("data: "):
+                        json_str = line[6:].strip()
+                        if current_event == "content_block_delta":
+                            try:
+                                data = json.loads(json_str)
+                                if data.get("delta", {}).get("type") == "text_delta":
+                                    yield data["delta"]["text"]
+                            except json.JSONDecodeError:
+                                continue
+                        elif current_event == "message_stop":
+                            break

@@ -11,8 +11,9 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GROQ_API_KEY=${GROQ_API_KEY}
-      - PII_ACTION=REDACT
+      - PII_ACTION=redact
       - SENTINEL_ENV=development
       - LOG_LEVEL=INFO
     restart: unless-stopped
@@ -53,9 +54,29 @@ services:
     profiles:
       - dev
 
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus-data:/prometheus
+    networks:
+      - sentinel-network
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - sentinel-network
+
 networks:
   sentinel-network:
     driver: bridge
 
 volumes:
   redis-data:
+  prometheus-data:
+  grafana-data:

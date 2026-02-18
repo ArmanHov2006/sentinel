@@ -44,34 +44,81 @@ class OpenAIProvider(LLMProvider):
         return ["gpt-4", "gpt-4o", "gpt-4o-mini"]
 
     async def stream(self, request: ChatRequest) -> AsyncIterator[str]:
+        """Stream a chat completion from OpenAI with circuit breaker protection."""
+        if not self._circuit_breaker.can_execute():
+            raise CircuitOpenError(
+                message="Circuit breaker is open - provider unavailable",
+                details={"provider": "openai"},
+            )
+
+        try:
+            async for chunk in self._do_stream(request):
+                yield chunk
+            self._circuit_breaker.record_success()
+        except Exception:
+            self._circuit_breaker.record_failure()
+            raise
+
+    async def _do_stream(self, request: ChatRequest) -> AsyncIterator[str]:
+        """Execute the streaming HTTP call to OpenAI."""
         payload = {
             "model": request.model,
             "messages": [
                 {"role": msg.role.value, "content": msg.content} for msg in request.messages
             ],
-            "temperature": request.parameters.temperature,
             "stream": True,
         }
+        if request.parameters.temperature is not None:
+            payload["temperature"] = request.parameters.temperature
+        if request.parameters.max_tokens:
+            payload["max_tokens"] = request.parameters.max_tokens
+        if request.parameters.top_p:
+            payload["top_p"] = request.parameters.top_p
+        if request.parameters.stop:
+            payload["stop"] = request.parameters.stop
 
         async with httpx.AsyncClient(base_url=self._base_url) as client:
             headers = {"Authorization": f"Bearer {self._api_key}"}
             async with client.stream(
                 "POST", "/chat/completions", json=payload, headers=headers
-            ) as stream:
-                async for line in stream.aiter_lines():
+            ) as resp:
+                if resp.status_code == 429:
+                    raise ProviderRateLimitError(
+                        "Rate limit exceeded",
+                        "openai",
+                        429,
+                        {"retry_after": resp.headers.get("retry-after", "unknown")},
+                    )
+                elif resp.status_code == 503:
+                    raise ProviderUnavailableError(
+                        "OpenAI service unavailable", "openai", 503
+                    )
+                elif resp.status_code != 200:
+                    await resp.aread()
+                    raise ProviderError(
+                        f"Request failed with status {resp.status_code}",
+                        "openai",
+                        resp.status_code,
+                        {"response": resp.text},
+                    )
+
+                async for line in resp.aiter_lines():
                     if not line:
                         continue
                     if line.startswith("data: "):
                         data_str = line[6:]
                         if data_str == "[DONE]":
                             break
-                        data = json.loads(data_str)
-                        choices = data.get("choices", [])
-                        if choices:
-                            delta = choices[0].get("delta", {})
-                            content = delta.get("content", "")
-                            if content:
-                                yield content
+                        try:
+                            data = json.loads(data_str)
+                            choices = data.get("choices", [])
+                            if choices:
+                                delta = choices[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    yield content
+                        except json.JSONDecodeError:
+                            continue
 
     async def health_check(self) -> bool:
         try:
