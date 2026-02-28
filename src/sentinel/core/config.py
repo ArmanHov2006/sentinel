@@ -58,6 +58,13 @@ class Settings(BaseSettings):
     rate_limit_max_requests: int = 100
     rate_limit_window_seconds: int = 60
 
+    # Semantic cache: similarity threshold for cache hits (e.g. 0.88 = paraphrase, 0.93 = stricter)
+    semantic_cache_threshold: float = 0.88
+
+    # LLM-as-judge evaluation
+    enable_judge: bool = False
+    judge_model: str = "gpt-4o-mini"
+
 
 @lru_cache
 def get_settings() -> Settings:
