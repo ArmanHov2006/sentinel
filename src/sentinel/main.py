@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from prometheus_client import make_asgi_app
 
 from sentinel.api.routes.health import router as health_router
 from sentinel.api.routes.metrics import router as metrics_router
@@ -24,8 +25,8 @@ from sentinel.core.logging_config import configure_logging
 from sentinel.core.rate_limiter import RateLimiter
 from sentinel.core.redis import create_redis_client
 from sentinel.core.retry import RetryPolicy
-from prometheus_client import make_asgi_app
-
+from sentinel.judge.evaluator import JudgeEvaluator
+from sentinel.judge.recorder import QualityRecorder
 from sentinel.middleware.trace import TraceMiddleware
 from sentinel.providers.anthropic import AnthropicProvider
 from sentinel.providers.openai import OpenAIProvider
@@ -34,8 +35,6 @@ from sentinel.providers.router import Router
 from sentinel.services.cache import CacheService
 from sentinel.services.embedding import EmbeddingService
 from sentinel.services.semantic_cache import SemanticCacheService
-from sentinel.judge.evaluator import JudgeEvaluator
-from sentinel.judge.recorder import QualityRecorder
 from sentinel.shield.pii_shield import PIIShield
 from sentinel.shield.prompt_injection_detector import PromptInjectionDetector
 
@@ -163,7 +162,10 @@ async def lifespan(app: FastAPI):
         app.state.rate_limiter = None
 
     # --- Quality Recorder (depends on Redis) ---
-    if getattr(app.state, "redis", None) is not None and getattr(app.state, "judge_evaluator", None) is not None:
+    if (
+        getattr(app.state, "redis", None) is not None
+        and getattr(app.state, "judge_evaluator", None) is not None
+    ):
         app.state.quality_recorder = QualityRecorder(redis_client=app.state.redis)
     else:
         app.state.quality_recorder = None
@@ -218,6 +220,7 @@ app.include_router(metrics_router)
 metrics_app = make_asgi_app()
 app.mount("/prometheus", metrics_app)
 
+
 # Dashboard routes
 @app.get("/dashboard")
 async def dashboard() -> FileResponse:
@@ -229,6 +232,7 @@ async def dashboard() -> FileResponse:
 async def root() -> RedirectResponse:
     """Redirect root to the monitoring dashboard."""
     return RedirectResponse(url="/dashboard")
+
 
 # Static file serving (must be last — acts as a catch-all for /static/*)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

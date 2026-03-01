@@ -1,3 +1,5 @@
+"""Circuit breaker for provider fault isolation."""
+
 import logging
 import time
 from enum import Enum
@@ -31,7 +33,7 @@ class CircuitBreaker:
         else:
             return True
 
-    def record_success(self):
+    def record_success(self) -> None:
         self.failure_count = 0
         self.state = CircuitBreakerState.Closed
 

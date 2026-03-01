@@ -1,3 +1,5 @@
+"""Redis-backed response cache service."""
+
 import hashlib
 import json
 import logging
@@ -29,7 +31,7 @@ class CacheService:
         metrics.increment("cache_misses")
         return None
 
-    async def set(self, key: str, value: Any, ttl: int = None) -> None:
+    async def set(self, key: str, value: Any, ttl: int | None = None) -> None:
         try:
             json_value = json.dumps(value, default=str)
             ttl = ttl or self.default_ttl

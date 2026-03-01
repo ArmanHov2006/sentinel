@@ -1,3 +1,5 @@
+"""PII shield that scans, blocks, redacts, or warns on detected PII."""
+
 from dataclasses import dataclass
 from enum import Enum
 

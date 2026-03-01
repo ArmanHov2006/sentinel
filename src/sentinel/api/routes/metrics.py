@@ -15,7 +15,7 @@ from fastapi import APIRouter, Request
 
 from sentinel.core.metrics import get_metrics, metrics
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # TODO: remove if unused
 
 router = APIRouter(tags=["Operations"])
 

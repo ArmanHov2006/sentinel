@@ -1,3 +1,5 @@
+"""Sliding-window rate limiter backed by Redis sorted sets."""
+
 import logging
 import time
 

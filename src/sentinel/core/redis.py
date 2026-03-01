@@ -1,3 +1,5 @@
+"""Redis client factory."""
+
 import redis.asyncio as redis
 
 from sentinel.core.config import get_settings

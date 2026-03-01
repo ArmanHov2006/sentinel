@@ -1,3 +1,5 @@
+"""Abstract base class for LLM providers."""
+
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 
@@ -39,6 +41,6 @@ class LLMProvider(ABC):
         return self._circuit_breaker.can_execute()
 
     @property
-    def circuit_breaker(self):
+    def circuit_breaker(self) -> CircuitBreaker:
         """Expose circuit breaker for health/metrics (read-only)."""
         return self._circuit_breaker

@@ -1,6 +1,9 @@
+"""Anthropic provider using raw HTTP via httpx."""
+
+import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-import json
+
 import httpx
 
 from sentinel.core.circuit_breaker import CircuitBreaker
@@ -186,7 +189,7 @@ class AnthropicProvider(LLMProvider):
                 latency_ms=0.0,
                 created_at=datetime.now(UTC),
             )
-    
+
     async def stream(self, request: ChatRequest) -> AsyncIterator[str]:
         """Stream a chat completion from Anthropic with circuit breaker protection."""
         if not self._circuit_breaker.can_execute():
@@ -228,7 +231,9 @@ class AnthropicProvider(LLMProvider):
             if system_prompt:
                 payload["system"] = system_prompt
 
-            async with client.stream("POST", "/messages", json=payload, headers=headers) as response:
+            async with client.stream(
+                "POST", "/messages", json=payload, headers=headers
+            ) as response:
                 if response.status_code == 429:
                     raise ProviderRateLimitError(
                         "Rate limit exceeded",

@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 
+
 class JudgeDimension(str, Enum):
     """Evaluation dimension or criterion the judge scored."""
 
@@ -18,10 +19,11 @@ class JudgeDimension(str, Enum):
     ACCURACY = "accuracy"
     COMPLETENESS = "completeness"
 
-    
+
 @dataclass(frozen=True)
 class JudgeResult:
     """Result of an LLM-as-judge evaluation."""
+
     dimensions: dict[JudgeDimension, float] = field(default_factory=dict)
     flags: list[str] = field(default_factory=list)
     reasoning: str = ""
@@ -31,7 +33,10 @@ class JudgeResult:
     @property
     def passed(self) -> bool:
         """Whether the evaluation passed."""
-        return all(score >= self.default_score_threshold for score in self.dimensions.values()) and len(self.flags) == 0
+        return (
+            all(score >= self.default_score_threshold for score in self.dimensions.values())
+            and len(self.flags) == 0
+        )
 
     def to_dict(self) -> dict:
         """Convert the result to a dictionary.

@@ -1,3 +1,5 @@
+"""PII entity detection using Microsoft Presidio."""
+
 from dataclasses import dataclass, field
 
 from presidio_analyzer import AnalyzerEngine

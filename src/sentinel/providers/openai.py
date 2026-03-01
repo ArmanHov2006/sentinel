@@ -1,3 +1,5 @@
+"""OpenAI provider using raw HTTP via httpx."""
+
 import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -90,9 +92,7 @@ class OpenAIProvider(LLMProvider):
                         {"retry_after": resp.headers.get("retry-after", "unknown")},
                     )
                 elif resp.status_code == 503:
-                    raise ProviderUnavailableError(
-                        "OpenAI service unavailable", "openai", 503
-                    )
+                    raise ProviderUnavailableError("OpenAI service unavailable", "openai", 503)
                 elif resp.status_code != 200:
                     await resp.aread()
                     raise ProviderError(

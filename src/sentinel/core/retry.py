@@ -1,3 +1,5 @@
+"""Retry policy with exponential backoff and jitter."""
+
 import asyncio
 import random
 from collections.abc import Callable

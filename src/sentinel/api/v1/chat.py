@@ -35,7 +35,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1", tags=["Chat"])
 
 
-async def _run_judge(evaluator, recorder, request_id: str, user_message: str, assistant_response: str) -> None:
+async def _run_judge(
+    evaluator, recorder, request_id: str, user_message: str, assistant_response: str
+) -> None:
     """Background task: evaluate the response with the judge LLM, then record the result."""
     try:
         result = await evaluator.evaluate(user_message, assistant_response)
@@ -45,13 +47,17 @@ async def _run_judge(evaluator, recorder, request_id: str, user_message: str, as
         logger.exception("Background judge task failed for request %s", request_id)
 
 
-def _schedule_judge(background_tasks, request, request_id: str, user_message: str, assistant_response: str) -> None:
+def _schedule_judge(
+    background_tasks, request, request_id: str, user_message: str, assistant_response: str
+) -> None:
     """Schedule the judge evaluation as a background task if evaluator is configured."""
     evaluator = getattr(request.app.state, "judge_evaluator", None)
     if evaluator is None:
         return
     recorder = getattr(request.app.state, "quality_recorder", None)
-    background_tasks.add_task(_run_judge, evaluator, recorder, request_id, user_message, assistant_response)
+    background_tasks.add_task(
+        _run_judge, evaluator, recorder, request_id, user_message, assistant_response
+    )
 
 
 async def fake_stream_response() -> AsyncIterator[str]:
@@ -197,7 +203,9 @@ async def create_chat_completion(
                     total_tokens=1,
                 ),
             )
-            semantic_cache.store(chat_request.messages[-1].content, cached_response, chat_request.model)
+            semantic_cache.store(
+                chat_request.messages[-1].content, cached_response, chat_request.model
+            )
             _schedule_judge(background_tasks, request, request_id, user_message, cached_response)
             return api_response
 
@@ -269,7 +277,10 @@ async def create_chat_completion(
         if cached_response:
             api_response = ChatCompletionResponse.model_validate(cached_response)
             _schedule_judge(
-                background_tasks, request, request_id, user_message,
+                background_tasks,
+                request,
+                request_id,
+                user_message,
                 api_response.choices[0].message.content,
             )
             return api_response
@@ -298,7 +309,10 @@ async def create_chat_completion(
         if cache is not None and cache_key is not None:
             await cache.set(cache_key, api_response.model_dump())
         _schedule_judge(
-            background_tasks, request, request_id, user_message,
+            background_tasks,
+            request,
+            request_id,
+            user_message,
             domain_response.message.content,
         )
         return api_response
@@ -335,7 +349,9 @@ async def create_chat_completion(
         await cache.set(cache_key, api_response.model_dump())
 
     tracker = CostTracker()
-    cost = tracker.calculate(TokenUsage(prompt_tokens=1, completion_tokens=1, model=chat_request.model, provider=""))
+    cost = tracker.calculate(
+        TokenUsage(prompt_tokens=1, completion_tokens=1, model=chat_request.model, provider="")
+    )
     logger.info("Cost: %s", cost.total_cost)
     logger.info("Prompt cost: %s", cost.prompt_cost)
     logger.info("Completion cost: %s", cost.completion_cost)

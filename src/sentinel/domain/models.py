@@ -30,6 +30,33 @@ class FinishReason(str, Enum):
     ERROR = "error"
 
 
+@dataclass
+class TokenUsage:
+    """Token usage for a request."""
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    model: str = field(default="")
+    provider: str = field(default="")
+
+    @property
+    def total_tokens(self) -> int:
+        return self.prompt_tokens + self.completion_tokens
+
+
+@dataclass
+class CostCalculation:
+    """Cost calculation for a request."""
+
+    prompt_cost: float = field(default=0.0)
+    completion_cost: float = field(default=0.0)
+    usage: TokenUsage = field(default_factory=TokenUsage)
+
+    @property
+    def total_cost(self) -> float:
+        return self.prompt_cost + self.completion_cost
+
+
 @dataclass(frozen=True)
 class Message:
     """A single message. Frozen to prevent modification after creation."""
@@ -58,18 +85,6 @@ class ChatRequest:
     parameters: ModelParameters = field(default_factory=ModelParameters)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class TokenUsage:
-    """Token consumption for a request."""
-
-    prompt_tokens: int
-    completion_tokens: int
-
-    @property
-    def total_tokens(self) -> int:
-        return self.prompt_tokens + self.completion_tokens
 
 
 @dataclass
