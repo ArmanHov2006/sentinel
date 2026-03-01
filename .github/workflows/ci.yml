@@ -84,8 +84,19 @@ jobs:
             -e REDIS_HOST=test-redis \
             -e OPENAI_API_KEY=test-key \
             sentinel:test
-          sleep 10
-          curl -f http://localhost:8000/health || exit 1
+          for i in $(seq 1 24); do
+            if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+              echo "Health check passed on attempt $i"
+              break
+            fi
+            if [ "$i" -eq 24 ]; then
+              echo "Health check failed after 120s"
+              docker logs test-sentinel
+              exit 1
+            fi
+            echo "Waiting for app to start (attempt $i/24)..."
+            sleep 5
+          done
           docker stop test-sentinel test-redis
           docker rm test-sentinel test-redis
           docker network rm test-net
