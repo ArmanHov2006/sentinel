@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     groq_api_key: str | None = None
     groq_base_url: str = "https://api.groq.com/openai/v1"
     request_timeout_seconds: float = 60.0
-    host: str = "0.0.0.0"
+    host: str = "0.0.0.0"  # nosec B104 — required for Docker containers
     port: int = 8000
 
     # Nested settings
