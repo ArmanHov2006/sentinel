@@ -2,15 +2,15 @@
 
 import hashlib
 import json
-import logging
 from typing import Any
 
 import redis.asyncio as redis
+import structlog
 
 from sentinel.core.metrics import metrics
 from sentinel.domain.models import Message
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class CacheService:
@@ -23,7 +23,7 @@ class CacheService:
         try:
             value = await self.client.get(key)
         except redis.RedisError as e:
-            logger.warning("Redis error getting key %s: %s", key, e)
+            logger.warning("cache_get_failed", key=key, error=str(e))
             return None
         if value:
             metrics.increment("cache_hits")
@@ -37,14 +37,14 @@ class CacheService:
             ttl = ttl or self.default_ttl
             await self.client.set(key, json_value, ex=ttl)
         except redis.RedisError as e:
-            logger.warning("Redis error setting key %s: %s", key, e)
+            logger.warning("cache_set_failed", key=key, error=str(e))
 
     async def delete(self, key: str) -> None:
         """Delete a cached value by key."""
         try:
             await self.client.delete(key)
         except redis.RedisError as e:
-            logger.warning("Redis error deleting key %s: %s", key, e)
+            logger.warning("cache_delete_failed", key=key, error=str(e))
 
     def generate_key(
         self,

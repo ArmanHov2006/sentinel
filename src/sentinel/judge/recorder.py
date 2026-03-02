@@ -1,11 +1,11 @@
 import json
-import logging
 
 import redis.asyncio as redis
+import structlog
 
 from sentinel.judge.models import JudgeResult
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 KEY_RESULT_PREFIX = "judge:result:"
 KEY_TOTAL_EVALUATIONS = "judge:total_evaluations"
@@ -33,4 +33,4 @@ class QualityRecorder:
             if not passed:
                 await self._redis.incr(KEY_FAILED_EVALUATIONS)
         except redis.RedisError as e:
-            logger.warning("QualityRecorder: failed to record evaluation for %s: %s", request_id, e)
+            logger.warning("quality_record_failed", request_id=request_id, error=str(e))

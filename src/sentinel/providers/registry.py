@@ -1,10 +1,10 @@
 """Provider registry for routing requests to the appropriate LLM provider."""
 
-import logging
+import structlog
 
 from sentinel.providers.base import LLMProvider
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class ProviderRegistry:
@@ -25,10 +25,7 @@ class ProviderRegistry:
     def register(self, provider: LLMProvider) -> None:
         """Register a provider."""
         if provider.name in self._providers:
-            logger.warning(
-                "Provider '%s' already registered, overwriting",
-                provider.name,
-            )
+            logger.warning("provider_overwritten", provider=provider.name)
             # Remove old provider's models from model map
             for model, prov_name in list(self._model_map.items()):
                 if prov_name == provider.name:
@@ -38,11 +35,7 @@ class ProviderRegistry:
         for model in provider.models:
             self._model_map[model] = provider.name
 
-        logger.info(
-            "Registered provider '%s' with %d model(s)",
-            provider.name,
-            len(provider.models),
-        )
+        logger.info("provider_registered", provider=provider.name, model_count=len(provider.models))
 
     def get_provider(self, name: str) -> LLMProvider | None:
         """Look up by provider name, return None if not found."""

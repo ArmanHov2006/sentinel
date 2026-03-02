@@ -1,11 +1,12 @@
 """Sliding-window rate limiter backed by Redis sorted sets."""
 
-import logging
 import time
+
+import structlog
 
 from sentinel.core.metrics import metrics
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class RateLimiter:
@@ -31,7 +32,7 @@ class RateLimiter:
             await self.client.expire(key, self.window_seconds)
             return True
         except Exception as e:
-            logger.error("Error checking rate limit for %s: %s", identifier, e)
+            logger.warning("rate_limit_check_failed", identifier=identifier, error=str(e))
             return True
 
     async def get_remaining(self, identifier: str) -> int:
@@ -42,5 +43,5 @@ class RateLimiter:
             count = await self.client.zcount(key, window_start, now)
             return max(0, self.max_requests - count)
         except Exception as e:
-            logger.error("Error getting remaining requests for %s: %s", identifier, e)
+            logger.warning("rate_limit_remaining_failed", identifier=identifier, error=str(e))
             return self.max_requests

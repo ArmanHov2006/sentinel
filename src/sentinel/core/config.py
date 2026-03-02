@@ -65,6 +65,15 @@ class Settings(BaseSettings):
     enable_judge: bool = False
     judge_model: str = "gpt-4o-mini"
 
+    # Authentication
+    require_auth: bool = False
+    sentinel_master_key: str | None = None
+
+    # OpenTelemetry
+    otel_exporter_endpoint: str = "http://localhost:4317"
+    otel_enabled: bool = True
+    otel_console_export: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

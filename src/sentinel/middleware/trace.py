@@ -1,15 +1,10 @@
-"""
-Request tracing and metrics middleware.
+"""Request tracing and metrics middleware."""
 
-Assigns a unique trace ID to every request, measures response time,
-and tracks request metrics. The trace ID flows through the entire
-async call chain via contextvars.
-"""
-
-import logging
 import time
 import uuid
 
+import structlog
+from opentelemetry import trace as otel_trace
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
@@ -17,23 +12,26 @@ from starlette.responses import Response
 from sentinel.core.context import set_request_id
 from sentinel.core.metrics import sentinel_metrics
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class TraceMiddleware(BaseHTTPMiddleware):
-    """Middleware that handles request tracing and metrics collection.
-
-    On every incoming request:
-    - Extracts or generates a trace ID (X-Request-ID header).
-    - Stores the trace ID in the ContextVar for the async call chain.
-    - Increments request counters and tracks active requests.
-    - Measures response time and records it as an observation.
-    - Adds X-Request-ID and X-Response-Time to response headers.
-    """
+    """Assigns a trace ID, measures latency, and records request metrics."""
 
     async def dispatch(self, request: Request, call_next: ...) -> Response:
         request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
         set_request_id(request_id)
+
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(request_id=request_id)
+
+        span = otel_trace.get_current_span()
+        ctx = span.get_span_context()
+        if ctx and ctx.trace_id:
+            structlog.contextvars.bind_contextvars(
+                trace_id=format(ctx.trace_id, "032x"),
+                span_id=format(ctx.span_id, "016x"),
+            )
 
         sentinel_metrics.increment_active_requests()
 
@@ -47,8 +45,13 @@ class TraceMiddleware(BaseHTTPMiddleware):
 
             response.headers["X-Request-ID"] = request_id
             response.headers["X-Response-Time"] = f"{elapsed}ms"
+
             logger.info(
-                "%s %s -> %d (%.2fms)", request.method, request.url.path, status_code, elapsed
+                "request_completed",
+                method=request.method,
+                path=request.url.path,
+                status_code=status_code,
+                elapsed_ms=round(elapsed * 1000, 2),
             )
             sentinel_metrics.record_request("unknown", "unknown", status_code)
             sentinel_metrics.record_latency("unknown", "unknown", elapsed)

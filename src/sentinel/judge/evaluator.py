@@ -1,14 +1,14 @@
 """LLM-as-judge evaluator — calls a cheap model, returns a structured JudgeResult."""
 
 import json
-import logging
 
+import structlog
 from openai import AsyncOpenAI
 
 from sentinel.judge.models import JudgeDimension, JudgeResult
 from sentinel.judge.prompt_builder import build_judge_prompt
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 _DIMENSION_KEYS = {d.value for d in JudgeDimension}
 _SAFE_DEFAULT_SCORE = 6.0
@@ -77,5 +77,5 @@ class JudgeEvaluator:
             return _parse_judge_response(raw)
 
         except Exception:
-            logger.exception("Judge evaluation failed")
+            logger.warning("judge_evaluation_failed", exc_info=True)
             return _safe_default()

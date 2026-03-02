@@ -5,10 +5,10 @@ Returns the overall system health including subsystem checks
 for Redis connectivity and circuit breaker states.
 """
 
-import logging
 import time
 from datetime import UTC, datetime
 
+import structlog
 from fastapi import APIRouter, Request
 
 from sentinel.api.schemas.health import (
@@ -18,7 +18,7 @@ from sentinel.api.schemas.health import (
     RedisHealthCheck,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 router = APIRouter(tags=["Operations"])
 

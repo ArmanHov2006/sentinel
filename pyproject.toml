@@ -8,13 +8,21 @@ requires-python = ">=3.11"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.coverage.run]
+source = ["sentinel"]
+omit = ["*/static/*", "*/__init__.py"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM", "TCH"]
-ignore = ["E501", "UP042", "B017"]
+ignore = ["E501", "UP042", "B017", "B008"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["sentinel"]

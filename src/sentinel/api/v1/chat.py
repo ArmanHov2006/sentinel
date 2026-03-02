@@ -2,18 +2,19 @@
 
 import asyncio
 import json
-import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
+import structlog
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
 from sentinel.api.converters import (
     to_api_chat_completion_response,
     to_domain_chat_request,
 )
+from sentinel.api.dependencies import verify_api_key
 from sentinel.api.schemas.chat import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -22,6 +23,7 @@ from sentinel.api.schemas.chat import (
     MessageSchema,
     UsageSchema,
 )
+from sentinel.core.auth import APIKeyData
 from sentinel.core.context import get_request_id
 from sentinel.core.metrics import metrics
 from sentinel.domain.exceptions import AllProvidersFailedError, NoProviderError
@@ -30,7 +32,7 @@ from sentinel.services.cost_tracker import CostTracker
 from sentinel.shield.pii_shield import PIIAction
 from sentinel.shield.prompt_injection_detector import InjectionAction
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/v1", tags=["Chat"])
 
@@ -44,7 +46,7 @@ async def _run_judge(
         if recorder is not None:
             await recorder.record(request_id, result)
     except Exception:
-        logger.exception("Background judge task failed for request %s", request_id)
+        logger.warning("judge_background_failed", request_id=request_id, exc_info=True)
 
 
 def _schedule_judge(
@@ -61,23 +63,7 @@ def _schedule_judge(
 
 
 async def fake_stream_response() -> AsyncIterator[str]:
-    words = [
-        "Hello",
-        " ",
-        "world",
-        " ",
-        "this",
-        " ",
-        "is",
-        " ",
-        "a",
-        " ",
-        "test",
-        " ",
-        "message",
-        ".",
-        "!",
-    ]
+    words = ["Hello", " ", "world", " ", "this", " ", "is", " ", "a", " ", "test", "."]
     for word in words:
         chunk = {"choices": [{"delta": {"content": word}}]}
         yield f"data: {json.dumps(chunk)}\n\n"
@@ -89,36 +75,36 @@ async def fake_stream_response() -> AsyncIterator[str]:
     "/chat/completions",
     response_model=ChatCompletionResponse,
     responses={
-        200: {"description": "Successful completion"},
-        400: {
-            "description": "Request blocked (PII or prompt injection detected)",
-            "content": {
-                "application/json": {
-                    "example": {"detail": "Request blocked: prompt injection detected"}
-                }
-            },
-        },
-        429: {
-            "description": "Rate limit exceeded",
-            "content": {"application/json": {"example": {"detail": "Rate limit exceeded"}}},
-        },
+        400: {"description": "Request blocked (PII or prompt injection detected)"},
+        429: {"description": "Rate limit exceeded"},
     },
     summary="Create chat completion",
-    description="Send a chat completion request through the full Sentinel pipeline: "
-    "rate limiting, PII detection, caching, circuit breaker, and retry. "
-    "Compatible with the OpenAI chat completions API format.",
 )
 async def create_chat_completion(
     chat_request: ChatCompletionRequest,
     request: Request,
     response: Response,
     background_tasks: BackgroundTasks,
+    api_key: APIKeyData | None = Depends(verify_api_key),
 ) -> ChatCompletionResponse | StreamingResponse:
     request_id = get_request_id()
     user_message = chat_request.messages[-1].content
     client_ip = request.client.host if request.client else "unknown"
+
+    # --- Model allowlist check ---
+    if (
+        api_key is not None
+        and "*" not in api_key.allowed_models
+        and chat_request.model not in api_key.allowed_models
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Model '{chat_request.model}' not allowed for this API key",
+        )
+
     rate_limiter = getattr(request.app.state, "rate_limiter", None)
 
+    # --- Rate limiting ---
     if rate_limiter is not None:
         allowed = await rate_limiter.is_allowed(client_ip)
         if not allowed:
@@ -132,6 +118,7 @@ async def create_chat_completion(
         response.headers["X-RateLimit-Limit"] = str(rate_limiter.max_requests)
         response.headers["X-RateLimit-Remaining"] = str(remaining)
 
+    # --- PII shield ---
     pii_shield = getattr(request.app.state, "pii_shield", None)
     if pii_shield is not None:
         messages_as_dicts = [{"role": m.role, "content": m.content} for m in chat_request.messages]
@@ -140,10 +127,7 @@ async def create_chat_completion(
             metrics.increment("pii_detections")
             if any(r.should_block for r in results.values()):
                 metrics.increment("pii_blocks")
-                raise HTTPException(
-                    status_code=400,
-                    detail="Invalid request due to PII detected",
-                )
+                raise HTTPException(status_code=400, detail="Invalid request due to PII detected")
             if pii_shield.action == PIIAction.REDACT:
                 modified = []
                 for i, msg in enumerate(chat_request.messages):
@@ -157,8 +141,9 @@ async def create_chat_completion(
             if pii_shield.action == PIIAction.WARN:
                 for idx, result in results.items():
                     pii_types = [f.type.value for f in result.findings]
-                    logger.warning("PII detected in message %d: %s", idx, pii_types)
+                    logger.warning("pii_detected", message_index=idx, pii_types=pii_types)
 
+    # --- Injection detection ---
     injection_detector = getattr(request.app.state, "injection_detector", None)
     if injection_detector is not None:
         messages_as_dicts = [{"role": m.role, "content": m.content} for m in chat_request.messages]
@@ -168,16 +153,16 @@ async def create_chat_completion(
         if injection_result.action == InjectionAction.BLOCK:
             metrics.increment("injection_blocks")
             raise HTTPException(
-                status_code=400,
-                detail="Request blocked: prompt injection detected",
+                status_code=400, detail="Request blocked: prompt injection detected"
             )
         if injection_result.action == InjectionAction.WARN:
             logger.warning(
-                "Prompt injection (WARN): score=%.3f, patterns=%s",
-                injection_result.risk_score,
-                injection_result.matched_rules,
+                "injection_warning",
+                score=round(injection_result.risk_score, 3),
+                patterns=injection_result.matched_rules,
             )
 
+    # --- Semantic cache ---
     semantic_cache = getattr(request.app.state, "semantic_cache", None)
     if semantic_cache is not None:
         cached_response = semantic_cache.lookup(chat_request.messages[-1].content)
@@ -190,18 +175,11 @@ async def create_chat_completion(
                 choices=[
                     ChoiceSchema(
                         index=0,
-                        message=ChoiceMessageSchema(
-                            role="assistant",
-                            content=cached_response,
-                        ),
+                        message=ChoiceMessageSchema(role="assistant", content=cached_response),
                         finish_reason="stop",
                     )
                 ],
-                usage=UsageSchema(
-                    prompt_tokens=1,
-                    completion_tokens=0,
-                    total_tokens=1,
-                ),
+                usage=UsageSchema(prompt_tokens=1, completion_tokens=0, total_tokens=1),
             )
             semantic_cache.store(
                 chat_request.messages[-1].content, cached_response, chat_request.model
@@ -209,6 +187,7 @@ async def create_chat_completion(
             _schedule_judge(background_tasks, request, request_id, user_message, cached_response)
             return api_response
 
+    # --- Streaming ---
     if chat_request.stream:
         provider_router = getattr(request.app.state, "router", None)
         if provider_router is None:
@@ -264,6 +243,7 @@ async def create_chat_completion(
             },
         )
 
+    # --- Redis cache ---
     cache = getattr(request.app.state, "cache", None)
     cache_key: str | None = None
 
@@ -285,6 +265,7 @@ async def create_chat_completion(
             )
             return api_response
 
+    # --- Provider completion ---
     provider_router = getattr(request.app.state, "router", None)
     domain_response = None
     if provider_router is not None:
@@ -303,9 +284,16 @@ async def create_chat_completion(
             ) from e
         except Exception:
             domain_response = None
+
     if domain_response is not None:
         api_response = to_api_chat_completion_response(domain_response)
         CostTracker().calculate(domain_response.usage)
+        if api_key is not None:
+            key_store = getattr(request.app.state, "key_store", None)
+            if key_store is not None:
+                await key_store.record_token_usage(
+                    api_key.key_hash, domain_response.usage.total_tokens
+                )
         if cache is not None and cache_key is not None:
             await cache.set(cache_key, api_response.model_dump())
         _schedule_judge(
@@ -317,9 +305,9 @@ async def create_chat_completion(
         )
         return api_response
 
+    # --- Mock fallback ---
     last_message = chat_request.messages[-1]
-    user_said = last_message.content
-    mock_content = f"You said: {user_said}"
+    mock_content = f"You said: {last_message.content}"
     unique_id = f"sentinel-{uuid.uuid4().hex[:12]}"
     timestamp = int(time.time())
 
@@ -331,18 +319,11 @@ async def create_chat_completion(
         choices=[
             ChoiceSchema(
                 index=0,
-                message=ChoiceMessageSchema(
-                    role="assistant",
-                    content=mock_content,
-                ),
+                message=ChoiceMessageSchema(role="assistant", content=mock_content),
                 finish_reason="stop",
             )
         ],
-        usage=UsageSchema(
-            prompt_tokens=1,
-            completion_tokens=1,
-            total_tokens=2,
-        ),
+        usage=UsageSchema(prompt_tokens=1, completion_tokens=1, total_tokens=2),
     )
 
     if cache is not None and cache_key is not None:
@@ -352,10 +333,7 @@ async def create_chat_completion(
     cost = tracker.calculate(
         TokenUsage(prompt_tokens=1, completion_tokens=1, model=chat_request.model, provider="")
     )
-    logger.info("Cost: %s", cost.total_cost)
-    logger.info("Prompt cost: %s", cost.prompt_cost)
-    logger.info("Completion cost: %s", cost.completion_cost)
-    logger.info("Usage: %s", cost.usage)
+    logger.info("cost_calculated", total=cost.total_cost, model=chat_request.model)
 
     _schedule_judge(background_tasks, request, request_id, user_message, mock_content)
     return api_response

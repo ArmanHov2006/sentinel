@@ -1,47 +1,37 @@
-"""
-Logging configuration for Sentinel.
-
-Configures structured logging with automatic request trace ID injection.
-Every log line includes the correlation ID from the request context.
-"""
+"""Structured logging configuration using structlog."""
 
 import logging
 
-from sentinel.core.context import get_request_id
+import structlog
 
 
-class RequestIdFilter(logging.Filter):
-    """Logging filter that injects the request trace ID into every log record."""
+def configure_logging(env: str = "development") -> None:
+    """Configure structlog with environment-appropriate rendering.
 
-    def filter(self, record: logging.LogRecord) -> bool:
-        """Add request_id attribute to the log record from context."""
-        record.request_id = get_request_id()  # type: ignore[attr-defined]
-        return True
-
-
-def configure_logging() -> None:
-    """Configure logging with trace ID injection for all handlers.
-
-    Sets up a console handler with a format that includes the request
-    trace ID on every log line. Applies the RequestIdFilter globally
-    so all loggers benefit from automatic trace ID injection.
+    In development: colored console output via ConsoleRenderer.
+    In production/test: JSON lines via orjson for machine parsing.
     """
-    log_format = "[%(asctime)s] [%(levelname)s] [%(request_id)s] %(name)s: %(message)s"
+    if env == "development":
+        renderer = structlog.dev.ConsoleRenderer()
+    else:
+        import orjson
 
-    request_id_filter = RequestIdFilter()
+        renderer = structlog.processors.JSONRenderer(serializer=orjson.dumps)
 
-    # Configure root logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.add_log_level,
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            renderer,
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
 
-    # Remove existing handlers to avoid duplicates on repeated calls
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
-
-    # Create and configure console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(logging.Formatter(log_format))
-    console_handler.addFilter(request_id_filter)
-
-    root_logger.addHandler(console_handler)
+    for noisy in ("httpx", "httpcore", "uvicorn.access"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)

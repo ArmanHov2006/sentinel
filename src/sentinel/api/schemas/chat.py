@@ -15,6 +15,7 @@ class MessageSchema(BaseModel):
     content: str = Field(
         description="The content of the message.",
         examples=["Hello, how are you?"],
+        max_length=100_000,
     )
 
 
@@ -27,6 +28,7 @@ class ChatCompletionRequest(BaseModel):
     )
     messages: list[MessageSchema] = Field(
         description="A list of messages comprising the conversation.",
+        max_length=100,
     )
     temperature: float = Field(
         default=1.0,

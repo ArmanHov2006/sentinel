@@ -1,12 +1,13 @@
 """Circuit breaker for provider fault isolation."""
 
-import logging
 import time
 from enum import Enum
 
+import structlog
+
 from sentinel.core.metrics import metrics
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class CircuitBreakerState(Enum):
@@ -50,7 +51,4 @@ class CircuitBreaker:
         if self.failure_count >= self.failure_threshold:
             self.state = CircuitBreakerState.Open
             metrics.increment("circuit_breaker_trips")
-            logger.warning(
-                "Circuit breaker tripped to OPEN after %d failures",
-                self.failure_count,
-            )
+            logger.warning("circuit_breaker_opened", failure_count=self.failure_count)

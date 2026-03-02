@@ -12,11 +12,12 @@ Design decisions:
 - Fail-open: if scanning crashes, request is allowed through
 """
 
-import logging
 import math
 import re
 from dataclasses import dataclass, field
 from enum import Enum
+
+import structlog
 
 # ── 1. Enum ──────────────────────────────────────────────────────────────────
 # First because ScanResult and Detector both reference it.
@@ -186,7 +187,7 @@ class PromptInjectionDetector:
         self._block_threshold = block_threshold
         self._warn_threshold = warn_threshold
         self._rules = rules or DEFAULT_RULES
-        self._logger = logging.getLogger(__name__)
+        self._logger = structlog.get_logger()
 
     def scan(self, messages: list[dict]) -> ScanResult:
         """Scan a message list for injection attempts.
@@ -229,10 +230,10 @@ class PromptInjectionDetector:
             # Log suspicious findings (includes trace ID automatically
             # via the logging filter set up in logging_config.py)
             self._logger.warning(
-                "Prompt injection detected: score=%.3f action=%s patterns=%s",
-                score,
-                action.value,
-                names,
+                "injection_detected",
+                score=round(score, 3),
+                action=action.value,
+                patterns=names,
             )
 
             return ScanResult(
@@ -244,7 +245,7 @@ class PromptInjectionDetector:
 
         except Exception as exc:
             # Fail open — don't crash the pipeline because of a scanning bug
-            self._logger.warning("Injection scan failed: %s — allowing request through", exc)
+            self._logger.warning("injection_scan_failed", action="fail_open", error=str(exc))
             return ScanResult.safe()
 
     def _scan_text(self, text: str) -> list[Rule]:

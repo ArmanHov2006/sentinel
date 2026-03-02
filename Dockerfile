@@ -12,8 +12,9 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/* && \
     pip install --no-cache-dir -r requirements.txt
-RUN adduser --disabled-password --gecos '' appuser
-USER appuser
+
+RUN adduser --disabled-password --gecos '' sentinel
+USER sentinel
 
 COPY . .
 
