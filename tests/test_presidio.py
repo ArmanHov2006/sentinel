@@ -1,7 +1,13 @@
 import pytest
 from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer.nlp_engine import NlpEngineProvider
 
-analyzer = AnalyzerEngine()
+_nlp_config = {
+    "nlp_engine_name": "spacy",
+    "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
+}
+_nlp_engine = NlpEngineProvider(nlp_configuration=_nlp_config).create_engine()
+analyzer = AnalyzerEngine(nlp_engine=_nlp_engine)
 
 TEXTS = [
     "Hey today I took my dog for a walk at 10:00 AM at the park, and we met our neighbor Johnny Depp",

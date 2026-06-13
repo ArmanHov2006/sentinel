@@ -3,8 +3,21 @@
 from dataclasses import dataclass, field
 
 from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer.nlp_engine import NlpEngineProvider
 
 from sentinel.domain.models import PIIEntity, PIIType
+
+
+def _build_analyzer() -> AnalyzerEngine:
+    """Build AnalyzerEngine, preferring en_core_web_lg with en_core_web_sm fallback."""
+    for model in ("en_core_web_lg", "en_core_web_sm"):
+        try:
+            config = {"nlp_engine_name": "spacy", "models": [{"lang_code": "en", "model_name": model}]}
+            nlp_engine = NlpEngineProvider(nlp_configuration=config).create_engine()
+            return AnalyzerEngine(nlp_engine=nlp_engine)
+        except Exception:
+            continue
+    return AnalyzerEngine()
 
 _DEFAULT_ENTITIES = ["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "LOCATION", "DATE_TIME"]
 
@@ -33,7 +46,7 @@ class PIIDetector:
     entities: list[str] = field(default_factory=lambda: _DEFAULT_ENTITIES.copy())
 
     def __post_init__(self) -> None:
-        self._analyzer = AnalyzerEngine()
+        self._analyzer = _build_analyzer()
         supported = set(self._analyzer.get_supported_entities())
         for entity in self.entities:
             if entity not in supported:
