@@ -13,31 +13,35 @@ Sentinel is a FastAPI gateway that sits between your application and LLM provide
 
 ## Architecture Overview
 
-Sentinel acts as a middleware layer between clients and LLM providers. Every request flows through a 5-stage pipeline:
+Sentinel acts as a middleware layer between clients and LLM providers. Every request flows through an 11-stage pipeline:
 
 ```mermaid
 flowchart LR
-    A[1. Rate Limit] --> B[2. PII Shield]
-    B --> C[3. Injection Check]
-    C --> D[4. Cache]
-    D --> E[5. Provider]
-
-    subgraph Pipeline
-        A
-        B
-        C
-        D
-        E
-    end
+    A[1. API-Key Auth] --> B[2. Rate Limit]
+    B --> C[3. PII Shield]
+    C --> D[4. Injection Check]
+    D --> E[5. Semantic Cache]
+    E --> F[6. Exact Cache]
+    F --> G[7. Provider Router]
+    G --> H[8. Circuit Breaker]
+    H --> I[9. Cost Tracking]
+    I --> J[10. Response Cache]
+    J --> K[11. Async Judge]
 ```
 
 | Stage | Component | Purpose |
 |-------|-----------|---------|
-| 1. Rate Limit | Redis-backed sliding window | Throttle per-client requests |
-| 2. PII Shield | Microsoft Presidio | Detect and redact/block PII |
-| 3. Injection Check | LLM-based detector | Block prompt injection attempts |
-| 4. Cache | Redis + FAISS semantic cache | Return cached responses for identical or similar requests |
-| 5. Provider | OpenAI, Anthropic, failover | Route to LLM with circuit breaker and retry |
+| 1. API-Key Auth | Virtual API keys | Authenticate clients, enforce per-key model allowlists |
+| 2. Rate Limit | Redis-backed sliding window | Throttle per-client requests |
+| 3. PII Shield | Microsoft Presidio | Detect and redact/block PII |
+| 4. Injection Check | 8 weighted regex rules | Block prompt injection; risk = 1 − ∏(1 − wᵢ) |
+| 5. Semantic Cache | FAISS + sentence-transformers | Return cached responses for paraphrased requests |
+| 6. Exact Cache | Redis (SHA-256 keys) | Return cached responses for identical requests |
+| 7. Provider Router | OpenAI, Anthropic | Route by model, automatic multi-provider failover |
+| 8. Circuit Breaker | Per-provider 3-state breaker | Fail fast on unhealthy providers, probe on recovery |
+| 9. Cost Tracking | Per-model token pricing | Compute and log request cost |
+| 10. Response Cache | Redis + FAISS write-back | Store fresh responses for future hits |
+| 11. Async Judge | LLM-as-judge background task | Score response quality off the hot path |
 
 ---
 
@@ -45,7 +49,7 @@ flowchart LR
 
 ### Security
 - **PII Detection & Redaction** — Detects emails, phone numbers, names, SSNs, credit cards via Microsoft Presidio. Configurable `BLOCK` / `REDACT` / `WARN` actions.
-- **Prompt Injection Detection** — LLM-based classifier blocks malicious prompt injection attempts.
+- **Prompt Injection Detection** — 8 weighted regex rules scored via complement product (1 − ∏(1 − wᵢ)); a single high-confidence match blocks the request.
 - **API Key Auth** — Virtual API keys for machine-to-machine authentication (optional).
 
 ### Performance
