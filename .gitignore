@@ -19,3 +19,4 @@ SENTINEL_CODE_REVIEW.md
 .claude/
 *.pdf
 *.plan.md
+.gstack/
